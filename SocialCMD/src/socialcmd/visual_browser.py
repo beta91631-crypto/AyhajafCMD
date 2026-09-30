@@ -351,12 +351,6 @@ class ChromePage:
         deadline = time.monotonic() + 15
         last_error: VisualBrowserError | None = None
         while time.monotonic() < deadline:
-            if self._process.poll() is not None:
-                details = self._startup_log_excerpt()
-                message = f"{self.label} exited before its local browser endpoint was ready."
-                if details:
-                    message += f" Browser output: {details}"
-                raise VisualBrowserError(message)
             try:
                 targets = self._get_json(port, "/json/list")
                 if not isinstance(targets, list):
@@ -374,10 +368,15 @@ class ChromePage:
                     raise
                 last_error = error
             time.sleep(0.1)
-        raise VisualBrowserError(
-            f"{self.label} did not expose a page through its local endpoint on port {port}."
-            + (f" Browser output: {self._startup_log_excerpt()}" if self._startup_log_excerpt() else "")
-        ) from last_error
+        return_code = self._process.poll()
+        if return_code is None:
+            message = f"{self.label} did not expose a page through its local endpoint on port {port}."
+        else:
+            message = f"{self.label} exited with code {return_code} before exposing a page on port {port}."
+        details = self._startup_log_excerpt()
+        if details:
+            message += f" Browser output: {details}"
+        raise VisualBrowserError(message) from last_error
 
     def _startup_log_excerpt(self) -> str:
         if self._startup_log_path is None:

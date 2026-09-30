@@ -92,7 +92,34 @@ def test_wait_for_page_list_retries_connection_refused(monkeypatch):
     ]
 
 
-def test_early_browser_exit_includes_startup_log(tmp_path):
+def test_ready_endpoint_is_accepted_after_launcher_exits(monkeypatch):
+    class ExitedLauncher:
+        def poll(self):
+            return 0
+
+    responses = iter(
+        (
+            VisualBrowserError("Could not contact the local browser endpoint."),
+            [{"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/1"}],
+        )
+    )
+    browser = ChromePage("https://example.org")
+    browser.label = "Edge"
+    browser._process = ExitedLauncher()
+
+    def get_json(port, path):
+        response = next(responses)
+        if isinstance(response, Exception):
+            raise response
+        return response
+
+    browser._get_json = get_json
+    monkeypatch.setattr("socialcmd.visual_browser.time.sleep", lambda _: None)
+
+    assert browser._wait_for_page_list(9222)[0]["type"] == "page"
+
+
+def test_early_browser_exit_includes_startup_log(tmp_path, monkeypatch):
     class ExitedProcess:
         def poll(self):
             return 1
@@ -103,6 +130,12 @@ def test_early_browser_exit_includes_startup_log(tmp_path):
     browser.label = "Edge"
     browser._process = ExitedProcess()
     browser._startup_log_path = startup_log
+    browser._get_json = lambda port, path: VisualBrowserError(
+        "Could not contact the local browser endpoint."
+    )
+    clock = iter((0.0, 16.0))
+    monkeypatch.setattr("socialcmd.visual_browser.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr("socialcmd.visual_browser.time.sleep", lambda _: None)
 
     with pytest.raises(VisualBrowserError, match="remote debugging is blocked"):
         browser._wait_for_page_list(9222)
