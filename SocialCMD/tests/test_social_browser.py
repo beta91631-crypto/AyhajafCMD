@@ -1,6 +1,11 @@
 import pytest
 
-from socialcmd.visual_browser import PLATFORMS, VisualBrowserError, resolve_social_input
+from socialcmd.visual_browser import (
+    PLATFORMS,
+    ChromePage,
+    VisualBrowserError,
+    resolve_social_input,
+)
 
 
 @pytest.mark.parametrize(
@@ -31,6 +36,19 @@ def test_http_url_is_opened_directly():
 
 def test_search_text_is_encoded():
     assert resolve_social_input("cats and dogs") == "https://duckduckgo.com/?q=cats+and+dogs"
+
+
+def test_wait_for_debug_port_reads_selected_profile(tmp_path):
+    (tmp_path / "DevToolsActivePort").write_text("9222\n/devtools/browser/test", encoding="ascii")
+
+    class RunningProcess:
+        def poll(self):
+            return None
+
+    browser = ChromePage("https://reddit.com/")
+    browser._process = RunningProcess()
+
+    assert browser._wait_for_debug_port(str(tmp_path)) == 9222
 
 
 @pytest.mark.parametrize("source", ["file:///etc/passwd", "ftp://example.org", "https:///missing-host"])

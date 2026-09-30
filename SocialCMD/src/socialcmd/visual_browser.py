@@ -196,7 +196,7 @@ class ChromePage:
             options["start_new_session"] = True
         try:
             self._process = subprocess.Popen(arguments, **options)
-            port = self._wait_for_debug_port()
+            port = self._wait_for_debug_port(profile_path)
             targets = self._get_json(port, "/json/list")
             if not isinstance(targets, list):
                 raise VisualBrowserError("The browser returned an invalid page list.")
@@ -246,9 +246,9 @@ class ChromePage:
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise VisualBrowserError("The browser returned malformed debugging data.") from error
 
-    def _wait_for_debug_port(self) -> int:
-        assert self._profile is not None and self._process is not None
-        active_port = Path(self._profile.name) / "DevToolsActivePort"
+    def _wait_for_debug_port(self, profile_path: str) -> int:
+        assert self._process is not None
+        active_port = Path(profile_path) / "DevToolsActivePort"
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self._process.poll() is not None:
