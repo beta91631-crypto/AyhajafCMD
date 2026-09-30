@@ -5,6 +5,11 @@ its live page into the terminal using full 24-bit RGB half-block pixels. Social
 feeds, images, and page colors are enabled by default; numbered markers let you
 activate visible page controls.
 
+Frames are captured as lossless PNG and scaled with nearest-neighbor sampling,
+so pixel edges stay sharp rather than blurred. Each terminal cell uses two
+vertically stacked color pixels to keep the displayed pixel shape close to
+square.
+
 ## Run
 
 On Windows, launch `SocialCMD.bat`. It first shows a site chooser. Pick a
@@ -24,10 +29,15 @@ Any HTTP or HTTPS URL can be opened; plain text is searched on the web.
 
 ## Controls
 
-Numbered markers identify controls in the live page image. Enter a marker
-number to activate it. Use `more` or `prev` to page through long control lists,
-`h N` to hover a control, and the arrow keys to scroll the page.
+You can control the page by a visible name or use numbered markers. If a name
+matches multiple controls, SocialCMD shows the matching choices instead of
+clicking one at random. Number markers remain a quick fallback. Use `more` or
+`prev` to page through markers and the arrow keys to scroll the page.
 
+- `click NAME` activates a control by its visible label
+- `open NAME` opens a matching link
+- `focus NAME` focuses a matching input
+- `type FIELD=TEXT` focuses the named input and enters text
 - `g URL` opens an address; plain text after `g` is searched
 - `/words` searches the web
 - `back`, `forward`, `reload`, and `home` navigate

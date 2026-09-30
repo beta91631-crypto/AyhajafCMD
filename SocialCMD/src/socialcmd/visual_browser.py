@@ -48,7 +48,7 @@ PLATFORM_ALIASES = {"fb": "facebook", "ig": "instagram", "twitter": "x"}
 MAX_CDP_MESSAGE_BYTES = 32 * 1024 * 1024
 MAX_INTERACTIVE_ELEMENTS = 40
 INTERACTIVE_SCRIPT = r"""(() => {
-  const selectors = 'a[href],button,input:not([type="hidden"]),textarea,select,[role="button"],[role="link"],[tabindex]:not([tabindex="-1"]),video';
+    const selectors = 'a[href],button,input:not([type="hidden"]),textarea,select,[role="button"],[role="link"],[role="textbox"],[contenteditable="true"],[tabindex]:not([tabindex="-1"]),video';
         const candidates = Array.from(document.querySelectorAll(selectors)).slice(0, 1000);
     const offset = Math.max(0, Number(window.__socialcmdOffset) || 0);
   const targets = [];
@@ -73,8 +73,9 @@ INTERACTIVE_SCRIPT = r"""(() => {
       element.getAttribute('alt') || element.tagName).replace(/\s+/g, ' ').trim().slice(0, 100);
     targets.push(element);
         visibleCount += 1;
-        items.push({number: targets.length, tag: element.tagName.toLowerCase(), label,
-            href: element.href || '', type: element.type || '',
+            items.push({number: targets.length, tag: element.tagName.toLowerCase(), label,
+                href: element.href || '', type: element.type || '',
+                editable: element.isContentEditable || element.matches('input,textarea,select,[role="textbox"]'),
       x: Math.max(0, rect.left), y: Math.max(0, rect.top),
       width: Math.min(rect.right, innerWidth) - Math.max(0, rect.left),
       height: Math.min(rect.bottom, innerHeight) - Math.max(0, rect.top)});
@@ -85,6 +86,10 @@ INTERACTIVE_SCRIPT = r"""(() => {
 HELP_TEXT = """SOCIALCMD CONTROLS
 
 N           Click numbered pixel marker
+click NAME  Click a control by its visible name
+open NAME   Open a link by its visible name
+focus NAME  Focus a named input
+type NAME=TEXT  Focus an input and enter text
 /words      Search the web
 g URL       Open an address or search words
 back / b    Go back
@@ -118,6 +123,34 @@ def resolve_social_input(value: str | None) -> str:
     if "://" in candidate:
         raise VisualBrowserError("Only HTTP and HTTPS addresses are supported.")
     return "https://duckduckgo.com/?q=" + quote_plus(candidate)
+
+
+def _match_controls(
+    elements: list[dict[str, Any]],
+    query: str,
+    *,
+    links_only: bool = False,
+    editable_only: bool = False,
+) -> list[dict[str, Any]]:
+    terms = " ".join(query.casefold().split())
+    if not terms:
+        return []
+    matches = []
+    for element in elements:
+        tag = str(element.get("tag", "")).casefold()
+        href = str(element.get("href", "")).casefold()
+        label = " ".join(str(element.get("label", "")).casefold().split())
+        if links_only and tag != "a" and not href:
+            continue
+        if editable_only and not element.get("editable"):
+            continue
+        searchable = f"{label} {href}"
+        if terms == label or terms == href or terms in searchable:
+            matches.append(element)
+            continue
+        if all(term in searchable for term in terms.split()):
+            matches.append(element)
+    return matches
 
 
 def choose_start_url() -> str | None:
@@ -417,8 +450,7 @@ class ChromePage:
 
     def screenshot(self) -> str:
         result = self.command("Page.captureScreenshot", {
-            "format": "jpeg",
-            "quality": 92,
+            "format": "png",
             "fromSurface": True,
             "captureBeyondViewport": False,
         })
@@ -635,7 +667,7 @@ def _write_terminal(
     status_line = _safe_status(
         f"{browser.label} | {browser.url} | {status}", columns
     )
-    help_line = "N click | / search | g URL | back/forward | r reload | update | q quit"
+    help_line = "click NAME | open NAME | focus NAME | type NAME=TEXT | N marker | / search | q quit"
     output = ["\x1b[H", frame, "\x1b[0m"]
     output.append(f"\x1b[{footer_row + 1};1H\x1b[2K\x1b[1;36m{status_line}\x1b[0m")
     output.append(f"\x1b[{footer_row + 2};1H\x1b[2K\x1b[2m{help_line[:columns]}\x1b[0m")
@@ -674,7 +706,11 @@ def _run_command(
     if not command:
         return "Ready", True
     if lowered in {"links", ":links"}:
-        return "Interactive controls marked", True
+        labels = [
+            f"{item.get('number')}: {item.get('label') or item.get('tag')}"
+            for item in browser._targets[:4]
+        ]
+        return "Controls: " + " | ".join(labels), True
     if lowered in {"page", "text"}:
         return "Page pixels", True
     if lowered == "help":
@@ -693,6 +729,37 @@ def _run_command(
     if lowered.startswith("t "):
         browser.type_text(command[2:])
         return "Text entered; press enter to submit", True
+    if lowered.startswith("type "):
+        field, separator, text = command[5:].partition("=")
+        if not separator or not field.strip():
+            return "Use type FIELD=TEXT", True
+        matches = _match_controls(browser._targets, field, editable_only=True)
+        if len(matches) != 1:
+            if not matches:
+                return f"No editable control matches '{field.strip()}'", True
+            labels = ", ".join(str(item.get("label") or item.get("number")) for item in matches[:4])
+            return f"Several fields match: {labels}", True
+        browser.click(int(matches[0]["number"]))
+        browser.type_text(text.lstrip())
+        return f"Typed into {matches[0].get('label') or 'field'}", True
+    if lowered.startswith(("click ", "open ", "focus ")):
+        action, query = command.split(None, 1)
+        action = action.lower()
+        matches = _match_controls(
+            browser._targets,
+            query,
+            links_only=action == "open",
+            editable_only=action == "focus",
+        )
+        if len(matches) != 1:
+            if not matches:
+                return f"No control matches '{query[:60]}'", True
+            labels = ", ".join(
+                f"{item.get('number')}: {item.get('label') or item.get('tag')}"
+                for item in matches[:4]
+            )
+            return f"Several controls match: {labels}", True
+        return browser.click(int(matches[0]["number"])), True
     if lowered.startswith("h "):
         try:
             number = int(command[2:].strip())
@@ -723,7 +790,7 @@ def _run_command(
         return ("Text found" if found else "Text not found"), True
     if command.isdigit():
         return browser.click(int(command)), True
-    return "Unknown command. Use a number, /search, g URL, or q.", True
+    return "Use click NAME, open NAME, focus NAME, type NAME=TEXT, or a marker number", True
 
 
 def run_social_browser(

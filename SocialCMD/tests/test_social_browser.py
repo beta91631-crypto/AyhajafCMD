@@ -12,6 +12,7 @@ from socialcmd.visual_browser import (
     VisualBrowserError,
     _render_browser_frame,
     _reserve_debug_port,
+    _run_command,
     choose_start_url,
     resolve_social_input,
 )
@@ -164,6 +165,58 @@ def test_browser_command_error_includes_method_name():
 
     with pytest.raises(VisualBrowserError, match="Page.enable: Invalid parameters"):
         browser.command("Page.enable")
+
+
+def test_page_screenshot_uses_lossless_png():
+    image = BytesIO()
+    Image.new("RGB", (1, 1), (17, 91, 233)).save(image, format="PNG")
+    screenshot_data = base64.b64encode(image.getvalue()).decode("ascii")
+    browser = ChromePage("https://example.org")
+    calls = []
+    browser.command = lambda method, params=None: calls.append((method, params)) or {
+        "data": screenshot_data
+    }
+
+    assert base64.b64decode(browser.screenshot()) == image.getvalue()
+    assert calls[0][1]["format"] == "png"
+
+
+def test_controls_can_be_opened_and_focused_by_name():
+    class FakeBrowser:
+        _targets = [
+            {"number": 1, "tag": "input", "label": "Search people", "editable": True},
+            {"number": 2, "tag": "a", "label": "Messages", "href": "https://example.org/messages"},
+        ]
+
+        def __init__(self):
+            self.clicked = []
+
+        def click(self, number):
+            self.clicked.append(number)
+            return f"Clicked {number}"
+
+        def type_text(self, text):
+            self.typed = text
+
+    browser = FakeBrowser()
+
+    assert _run_command(browser, "open Messages") == ("Clicked 2", True)
+    assert _run_command(browser, "type Search people=hello") == ("Typed into Search people", True)
+    assert browser.clicked == [2, 1]
+    assert browser.typed == "hello"
+
+
+def test_ambiguous_named_control_suggests_matches():
+    class FakeBrowser:
+        _targets = [
+            {"number": 1, "tag": "a", "label": "Messages inbox", "href": "https://example.org/inbox"},
+            {"number": 2, "tag": "button", "label": "Messages settings"},
+        ]
+
+    status, keep_running = _run_command(FakeBrowser(), "click Messages")
+
+    assert keep_running
+    assert status.startswith("Several controls match:")
 
 
 def test_rgb_frame_preserves_full_color_and_control_markers():
