@@ -230,7 +230,7 @@ YouTubeCMD.bat https://www.youtube.com/watch?v=VIDEO_ID
 YouTubeCMD.bat --fps 6
 ```
 
-The visible page is refreshed at 4 FPS by default. Numbered markers are drawn
+The visible page is refreshed at 8 FPS by default. Numbered markers are drawn
 over clickable page elements. Type a marker number and press Enter to activate
 it; selecting the YouTube search field lets you enter text with `t words`, then
 submit it with `enter`. Use `/words` for an immediate YouTube search or `g URL`
@@ -254,7 +254,7 @@ For the legacy separate pixel window player, run `YouTubeCMD.bat --native`.
 | `enter`, `space`, `tab`, `escape`, `backspace` | Send a key to the page |
 | Up / Down arrows | Scroll the webpage |
 | `q` + Enter or Ctrl+C | Quit and close the temporary browser |
-| `--fps 1..10` | Change terminal screenshot refresh rate (default 4) |
+| `--fps 1..15` | Change terminal screenshot refresh rate (default 8) |
 
 ---
 
@@ -540,7 +540,7 @@ It does not download a browser binary or extract media URLs in visual mode.
   `prev` move between batches.
 - The browser uses a fresh temporary profile, so sign-in cookies are not saved.
 - Browser audio output and autoplay behavior can vary by Windows/browser setup.
-- Rendering refresh is limited to 1-10 FPS to keep CPU use bounded.
+- Rendering refresh is limited to 1-15 FPS to keep CPU use bounded.
 - Legacy CMD may render Unicode/color differently; Windows Terminal is preferred.
 - Live YouTube page, media, and audio behavior has not yet been verified on
   Windows from this workspace.

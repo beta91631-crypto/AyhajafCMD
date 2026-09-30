@@ -4,7 +4,11 @@ import unittest
 
 from PIL import Image
 
-from youtubecmd.visual_terminal import prepare_terminal_pixels, render_rgb_frame
+from youtubecmd.visual_terminal import (
+    prepare_terminal_pixels,
+    render_control_markers,
+    render_rgb_frame,
+)
 
 
 class VisualTerminalTests(unittest.TestCase):
@@ -31,7 +35,7 @@ class VisualTerminalTests(unittest.TestCase):
         source.save(encoded, format="JPEG", quality=100)
         screenshot = base64.b64encode(encoded.getvalue()).decode("ascii")
 
-        pixels, width, height = prepare_terminal_pixels(
+        pixels, width, height, markers = prepare_terminal_pixels(
             screenshot,
             [{"number": 1, "x": 0, "y": 0, "width": 4, "height": 4}],
             terminal_width=8,
@@ -42,7 +46,18 @@ class VisualTerminalTests(unittest.TestCase):
 
         self.assertEqual((width, height), (8, 4))
         self.assertEqual(len(pixels), width * height * 3)
-        self.assertIn(bytes((0, 170, 220)), pixels)
+        self.assertEqual(markers, [(1, 0, 0)])
+        self.assertNotIn(bytes((0, 170, 220)), pixels)
+
+        overlay = render_control_markers(markers, width, height // 2)
+        self.assertIn("\x1b[48;2;0;170;220m", overlay)
+        self.assertIn(" 1 ", overlay)
+
+    def test_marker_labels_remain_small_terminal_text(self):
+        rendered = render_control_markers([(17, 2, 4)], 20, 10)
+
+        self.assertIn("\x1b[3;5H", rendered)
+        self.assertIn(" 17 ", rendered)
 
     def test_rejects_bad_screenshot_data(self):
         with self.assertRaises(ValueError):

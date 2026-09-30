@@ -23,11 +23,17 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 
 from youtubecmd.setup import enable_ansi
-from youtubecmd.visual_terminal import prepare_terminal_pixels, render_rgb_frame
+from youtubecmd.visual_terminal import (
+    prepare_terminal_pixels,
+    render_control_markers,
+    render_rgb_frame,
+)
 
 
 VIEWPORT_WIDTH = 1280
 VIEWPORT_HEIGHT = 720
+DEFAULT_FPS = 8
+MAX_FPS = 15
 MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
 MAX_CDP_MESSAGE_BYTES = 32 * 1024 * 1024
 MAX_INTERACTIVE_ELEMENTS = 40
@@ -347,7 +353,7 @@ class ChromePage:
 
     def screenshot(self) -> str:
         result = self.command("Page.captureScreenshot", {
-            "format": "jpeg", "quality": 65, "fromSurface": True,
+            "format": "jpeg", "quality": 85, "fromSurface": True,
             "captureBeyondViewport": False,
         })
         data = result.get("data")
@@ -493,11 +499,12 @@ def _write_terminal(
 ) -> None:
     elements = browser.visible_elements()
     screenshot = browser.screenshot()
-    pixels, width, height = prepare_terminal_pixels(
+    pixels, width, height, markers = prepare_terminal_pixels(
         screenshot, elements, columns, rows, VIEWPORT_WIDTH, VIEWPORT_HEIGHT
     )
     page = render_rgb_frame(pixels, width, height)
     page_rows = height // 2
+    page += render_control_markers(markers, width, page_rows)
     status_line = _safe_status(
         f"{browser.url} | {status} | {len(elements)} controls marked", columns
     )
@@ -553,9 +560,9 @@ def _run_command(browser: ChromePage, command: str) -> tuple[str, bool]:
     return "Unknown command. Use a marker number, /search, g URL, t text, or q.", True
 
 
-def run_visual_browser(source: str | None = None, fps: int = 4) -> int:
-    if not 1 <= fps <= 10:
-        raise VisualBrowserError("Refresh rate must be between 1 and 10 FPS.")
+def run_visual_browser(source: str | None = None, fps: int = DEFAULT_FPS) -> int:
+    if not 1 <= fps <= MAX_FPS:
+        raise VisualBrowserError(f"Refresh rate must be between 1 and {MAX_FPS} FPS.")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if not enable_ansi():
@@ -613,7 +620,10 @@ def run_visual_browser(source: str | None = None, fps: int = 4) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Browse real YouTube pages in a true-color terminal")
     parser.add_argument("source", nargs="*", help="YouTube URL or search words")
-    parser.add_argument("--fps", type=int, default=4, help="terminal refresh rate (1-10 FPS)")
+    parser.add_argument(
+        "--fps", type=int, default=DEFAULT_FPS,
+        help=f"terminal refresh rate (1-{MAX_FPS} FPS, default {DEFAULT_FPS})",
+    )
     args = parser.parse_args(argv)
     try:
         return run_visual_browser(" ".join(args.source) or None, args.fps)

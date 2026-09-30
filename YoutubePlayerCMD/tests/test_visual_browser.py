@@ -1,11 +1,15 @@
 import unittest
+import base64
 from io import StringIO
 from unittest.mock import patch
 
 from youtubecmd.visual_browser import (
     ChromePage,
+    DEFAULT_FPS,
     INTERACTIVE_SCRIPT,
+    MAX_FPS,
     VisualBrowserError,
+    run_visual_browser,
     _write_terminal,
     _run_command,
     resolve_youtube_input,
@@ -73,6 +77,21 @@ class VisualBrowserTests(unittest.TestCase):
         with self.assertRaises(VisualBrowserError):
             resolve_youtube_input("file:///etc/passwd")
 
+    def test_refresh_rate_defaults_to_smooth_bounded_values(self):
+        self.assertEqual(DEFAULT_FPS, 8)
+        self.assertEqual(MAX_FPS, 15)
+        with self.assertRaises(VisualBrowserError):
+            run_visual_browser(fps=MAX_FPS + 1)
+
+    def test_screenshot_capture_uses_higher_jpeg_quality(self):
+        page = ChromePage("https://www.youtube.com/")
+        image = base64.b64encode(b"\xff\xd8\xffimage").decode("ascii")
+
+        with patch.object(page, "command", return_value={"data": image}) as command:
+            self.assertEqual(page.screenshot(), image)
+
+        self.assertEqual(command.call_args.args[1]["quality"], 85)
+
     def test_terminal_commands_click_search_type_and_submit(self):
         browser = FakePage()
 
@@ -138,7 +157,7 @@ class VisualBrowserTests(unittest.TestCase):
 
         evaluate.assert_called_once_with("window.__youtubecmdOffset = 40")
 
-    @patch("youtubecmd.visual_browser.prepare_terminal_pixels", return_value=(bytes(10 * 14 * 3), 10, 14))
+    @patch("youtubecmd.visual_browser.prepare_terminal_pixels", return_value=(bytes(10 * 14 * 3), 10, 14, []))
     @patch("youtubecmd.visual_browser.render_rgb_frame", return_value="PIXELS")
     def test_terminal_footer_stays_inside_available_rows(self, _render, _prepare):
         output = StringIO()
