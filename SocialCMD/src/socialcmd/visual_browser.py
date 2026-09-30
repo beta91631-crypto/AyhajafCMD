@@ -226,6 +226,8 @@ class ChromePage:
             f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
             "about:blank",
         ]
+        if not self._load_visual_resources:
+            arguments.append("--blink-settings=imagesEnabled=false")
         options: dict[str, Any] = {
             "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
@@ -255,7 +257,6 @@ class ChromePage:
                 raise VisualBrowserError("Could not connect to the browser's local page session.") from error
             self.command("Page.enable")
             self.command("Runtime.enable")
-            self.configure_resource_loading()
             self.command("Emulation.setDeviceMetricsOverride", {
                 "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
                 "deviceScaleFactor": 1, "mobile": False,
@@ -340,7 +341,7 @@ class ChromePage:
             if "error" in response:
                 details = response["error"]
                 message = details.get("message", "command failed") if isinstance(details, dict) else "command failed"
-                raise VisualBrowserError(str(message)[:300])
+                raise VisualBrowserError(f"{method}: {str(message)[:280]}")
             result = response.get("result", {})
             if not isinstance(result, dict):
                 raise VisualBrowserError("The browser returned an invalid command result.")
@@ -355,18 +356,6 @@ class ChromePage:
             raise VisualBrowserError("The page rejected that interaction.")
         remote = result.get("result", {})
         return remote.get("value") if isinstance(remote, dict) else None
-
-    def configure_resource_loading(self) -> None:
-        if self._load_visual_resources:
-            return
-        self.command("Network.enable")
-        self.command("Network.setBlockedURLs", {
-            "urlPatterns": [
-                {"urlPattern": "*", "resourceType": "Image"},
-                {"urlPattern": "*", "resourceType": "Media"},
-                {"urlPattern": "*", "resourceType": "Font"},
-            ],
-        })
 
     def navigate(self, url: str) -> None:
         result = self.command("Page.navigate", {"url": url})

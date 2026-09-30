@@ -88,7 +88,8 @@ def test_wait_for_page_list_retries_until_page_target_exists(monkeypatch):
     ]
 
 
-def test_browser_launch_uses_reserved_debug_port(monkeypatch):
+@pytest.mark.parametrize("load_visual_resources", [False, True])
+def test_browser_launch_uses_reserved_debug_port(monkeypatch, load_visual_resources):
     port = 9321
     launch_arguments = []
     waited_ports = []
@@ -118,11 +119,31 @@ def test_browser_launch_uses_reserved_debug_port(monkeypatch):
     monkeypatch.setattr(ChromePage, "command", lambda self, method, params=None: {})
     monkeypatch.setattr(ChromePage, "navigate", lambda self, url: None)
 
-    with ChromePage("https://reddit.com/", private=True):
+    with ChromePage(
+        "https://reddit.com/",
+        private=True,
+        load_visual_resources=load_visual_resources,
+    ):
         pass
 
     assert f"--remote-debugging-port={port}" in launch_arguments
     assert waited_ports == [port]
+    assert ("--blink-settings=imagesEnabled=false" in launch_arguments) is not load_visual_resources
+
+
+def test_browser_command_error_includes_method_name():
+    class ErrorSocket:
+        def send(self, payload):
+            pass
+
+        def recv(self, timeout):
+            return '{"id":1,"error":{"message":"Invalid parameters"}}'
+
+    browser = ChromePage("https://example.org")
+    browser._socket = ErrorSocket()
+
+    with pytest.raises(VisualBrowserError, match="Page.enable: Invalid parameters"):
+        browser.command("Page.enable")
 
 
 def test_page_text_wraps_and_removes_terminal_escape_sequences():
@@ -140,31 +161,6 @@ def test_control_list_includes_link_destination():
 
     assert any("Open page" in line for line in lines)
     assert any("https://example.org" in line for line in lines)
-
-
-def test_lightweight_mode_blocks_visual_resources():
-    calls = []
-    browser = ChromePage("https://example.org")
-    browser.command = lambda method, params=None: calls.append((method, params))
-
-    browser.configure_resource_loading()
-
-    assert [method for method, _ in calls] == ["Network.enable", "Network.setBlockedURLs"]
-    blocked_types = {
-        pattern["resourceType"]
-        for pattern in calls[1][1]["urlPatterns"]
-    }
-    assert blocked_types == {"Image", "Media", "Font"}
-
-
-def test_visual_resources_can_be_enabled_for_compatibility():
-    calls = []
-    browser = ChromePage("https://example.org", load_visual_resources=True)
-    browser.command = lambda method, params=None: calls.append(method)
-
-    browser.configure_resource_loading()
-
-    assert calls == []
 
 
 @pytest.mark.parametrize("source", ["file:///etc/passwd", "ftp://example.org", "https:///missing-host"])

@@ -38,8 +38,8 @@ arrow keys to scroll the page.
 - `enter`, `space`, `tab`, `escape`, and `backspace` go to the page
 - `q` quits
 
-By default, SocialCMD blocks image, media, and font downloads because they are
-not shown in its text interface. If a site needs them to work, start it with
+By default, SocialCMD disables image loading because images are not shown in
+its text interface. If a site needs images to work, start it with
 `SocialCMD.bat --load-visual-resources`.
 
 ## Sign-in and privacy
