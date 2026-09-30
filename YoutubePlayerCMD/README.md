@@ -149,6 +149,7 @@ YouTubeCMD/
 	requirements-dev.txt
 	config.json
 	src/youtubecmd/
+		browse.py
 		extract.py
 		player.py
 		renderer.py
@@ -161,6 +162,7 @@ YouTubeCMD/
 		check_ffmpeg.bat
 		local_render_test.py
 	tests/
+		test_browse.py
 		test_extract.py
 		test_native.py
 		test_renderer.py
@@ -219,28 +221,25 @@ This may take a short time.
 
 ## Usage
 
-When the player starts, you will see something like:
+When the launcher starts, enter a YouTube search or paste a video URL:
 
 ```text
-========================================
-YouTubeCMD
-YouTube URL:
+Search YouTube or paste a video URL.
+> nature documentary
 ```
 
-Paste a YouTube URL and press Enter.
+Search results appear as a numbered list. Choose one, then choose its source
+resolution: 360p, 480p, 720p, 1080p, or the best available. The default is 720p.
+You can also pass a URL or search phrase directly:
 
-Example:
-
-```text
-https://www.youtube.com/watch?v=dQw4w9WgXcQ
+```bat
+YouTubeCMD.bat "nature documentary"
+YouTubeCMD.bat https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
-Then playback should begin.
-
-Before playback, choose the source video resolution: 360p, 480p, 720p, 1080p,
-or the best available. The default is 720p. Playback opens in a separate
-window with full RGB color and high render resolution. Resize that window while
-playing and the picture adjusts automatically.
+Playback opens in a separate resizable window with full RGB color. Resize the
+window while playing and the picture adjusts automatically. The terminal picker
+shows search results; it does not render YouTube's full interactive webpage.
 
 ---
 
@@ -257,8 +256,8 @@ playing and the picture adjusts automatically.
 | `Down Arrow` | Volume down |
 | `R` | Restart video |
 | `F` | Maximize / restore the video window |
-| `+` | Increase render resolution |
-| `-` | Decrease render resolution |
+| `+` | Increase playback render resolution |
+| `-` | Decrease playback render resolution |
 
 The display refreshes automatically after the video window is resized. The C++
 player drops late frames and lowers render resolution when it repeatedly misses
@@ -357,10 +356,10 @@ ffmpeg -f lavfi -i testsrc=size=320x180:rate=30 -vf format=gray -f rawvideo - | 
 ```
 
 `YouTubeCMD.bat` starts a separate RGB pixel window at high render resolution.
-The `+` and `-` keys adjust render resolution during playback. The source video
-resolution is selected before playback. The existing `config.json` is retained
-for the Python compatibility player; the native player uses command-line mode
-and quality options.
+The `+` and `-` keys adjust render resolution during playback; source video
+resolution is selected after choosing a video. The existing `config.json` is
+retained for the Python compatibility player; the native player uses
+command-line mode and quality options.
 
 ---
 
@@ -517,6 +516,7 @@ python -m pytest
 ```
 
 Important test areas:
+- terminal search and video selection
 - URL validation
 - renderer sizing
 - aspect ratio
@@ -548,6 +548,7 @@ network access.
 
 ### Phase 2 — Stream Selection
 - URL validation
+- terminal search results and numbered selection
 - yt-dlp extraction
 - friendly errors
 
@@ -613,6 +614,10 @@ YouTubeCMD should:
 - Seeking may take a short time because streams are restarted.
 - Some YouTube videos cannot be accessed automatically.
 - Perfect frame synchronization is not guaranteed.
+- Audio and video use separate FFplay/FFmpeg processes, so small sync offsets
+  can vary with network and device startup time.
+- The terminal picker shows search results; it does not render YouTube's full
+  interactive webpage.
 - CMD and Windows Terminal behave differently.
 - Low-end PCs need lower quality settings.
 

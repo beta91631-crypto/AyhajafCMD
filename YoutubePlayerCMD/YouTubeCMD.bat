@@ -13,21 +13,8 @@ if errorlevel 1 goto failed
 
 set "PYTHONPATH=%CD%\src"
 echo YouTubeCMD
-echo.
-echo Choose source video quality:
-echo   1. 360p
-echo   2. 480p
-echo   3. 720p (recommended)
-echo   4. 1080p
-echo   5. Best available
-set "VIDEO_QUALITY=720"
-set /p "VIDEO_QUALITY_CHOICE=Select 1-5 [3]: "
-if "%VIDEO_QUALITY_CHOICE%"=="1" set "VIDEO_QUALITY=360"
-if "%VIDEO_QUALITY_CHOICE%"=="2" set "VIDEO_QUALITY=480"
-if "%VIDEO_QUALITY_CHOICE%"=="4" set "VIDEO_QUALITY=1080"
-if "%VIDEO_QUALITY_CHOICE%"=="5" set "VIDEO_QUALITY=best"
 set "STREAM_FILE=%TEMP%\YouTubeCMD-stream-%RANDOM%-%RANDOM%.json"
-".venv\Scripts\python.exe" -m youtubecmd.extract %* --video-quality "%VIDEO_QUALITY%" > "%STREAM_FILE%"
+".venv\Scripts\python.exe" -m youtubecmd.browse %* > "%STREAM_FILE%"
 set "EXIT_CODE=%ERRORLEVEL%"
 if not "%EXIT_CODE%"=="0" goto finished
 "bin\renderer.exe" --stream "%STREAM_FILE%" --mode pixel --quality high
