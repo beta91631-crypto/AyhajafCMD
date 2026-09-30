@@ -92,6 +92,22 @@ def test_wait_for_page_list_retries_connection_refused(monkeypatch):
     ]
 
 
+def test_early_browser_exit_includes_startup_log(tmp_path):
+    class ExitedProcess:
+        def poll(self):
+            return 1
+
+    startup_log = tmp_path / "edge.log"
+    startup_log.write_text("ERROR: remote debugging is blocked", encoding="utf-8")
+    browser = ChromePage("https://example.org")
+    browser.label = "Edge"
+    browser._process = ExitedProcess()
+    browser._startup_log_path = startup_log
+
+    with pytest.raises(VisualBrowserError, match="remote debugging is blocked"):
+        browser._wait_for_page_list(9222)
+
+
 def test_wait_for_page_list_retries_until_page_target_exists(monkeypatch):
     class RunningProcess:
         def poll(self):

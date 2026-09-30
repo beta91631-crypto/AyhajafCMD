@@ -242,6 +242,7 @@ class ChromePage:
         self._private = private
         self._load_visual_resources = load_visual_resources
         self._process: subprocess.Popen | None = None
+        self._startup_log_path: Path | None = None
         self._socket: Any = None
         self._command_id = 0
         self._targets: list[dict[str, Any]] = []
@@ -281,12 +282,9 @@ class ChromePage:
         ]
         if not self._load_visual_resources:
             arguments.append("--blink-settings=imagesEnabled=false")
-        if not self._load_visual_resources:
-            arguments.append("--blink-settings=imagesEnabled=false")
         options: dict[str, Any] = {
             "stdin": subprocess.DEVNULL,
             "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
             "shell": False,
             "close_fds": True,
         }
@@ -295,7 +293,12 @@ class ChromePage:
         else:
             options["start_new_session"] = True
         try:
-            self._process = subprocess.Popen(arguments, **options)
+            with tempfile.NamedTemporaryFile(
+                prefix="SocialCMD-edge-", suffix=".log", delete=False
+            ) as startup_log:
+                self._startup_log_path = Path(startup_log.name)
+                options["stderr"] = startup_log
+                self._process = subprocess.Popen(arguments, **options)
             targets = self._wait_for_page_list(port)
             endpoint = next((item.get("webSocketDebuggerUrl") for item in targets
                              if isinstance(item, dict) and item.get("type") == "page"), None)
@@ -349,7 +352,11 @@ class ChromePage:
         last_error: VisualBrowserError | None = None
         while time.monotonic() < deadline:
             if self._process.poll() is not None:
-                raise VisualBrowserError(f"{self.label} exited before its local browser endpoint was ready.")
+                details = self._startup_log_excerpt()
+                message = f"{self.label} exited before its local browser endpoint was ready."
+                if details:
+                    message += f" Browser output: {details}"
+                raise VisualBrowserError(message)
             try:
                 targets = self._get_json(port, "/json/list")
                 if not isinstance(targets, list):
@@ -369,7 +376,17 @@ class ChromePage:
             time.sleep(0.1)
         raise VisualBrowserError(
             f"{self.label} did not expose a page through its local endpoint on port {port}."
+            + (f" Browser output: {self._startup_log_excerpt()}" if self._startup_log_excerpt() else "")
         ) from last_error
+
+    def _startup_log_excerpt(self) -> str:
+        if self._startup_log_path is None:
+            return ""
+        try:
+            lines = self._startup_log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return ""
+        return " | ".join(line.strip() for line in lines[-5:] if line.strip())[-500:]
 
     def command(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._socket is None:
@@ -596,6 +613,12 @@ class ChromePage:
         if self._profile is not None:
             self._profile.cleanup()
             self._profile = None
+        if self._startup_log_path is not None:
+            try:
+                self._startup_log_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._startup_log_path = None
 
     def __exit__(self, *_exc: object) -> None:
         self.close()
