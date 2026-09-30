@@ -4,6 +4,8 @@ from socialcmd.visual_browser import (
     PLATFORMS,
     ChromePage,
     VisualBrowserError,
+    _control_lines,
+    _page_lines,
     resolve_social_input,
 )
 
@@ -49,6 +51,48 @@ def test_wait_for_debug_port_reads_selected_profile(tmp_path):
     browser._process = RunningProcess()
 
     assert browser._wait_for_debug_port(str(tmp_path)) == 9222
+
+
+def test_page_text_wraps_and_removes_terminal_escape_sequences():
+    lines = _page_lines("A readable heading\n\x1b[31mhidden formatting", 12)
+
+    assert lines[0] == "A readable"
+    assert all("\x1b" not in line for line in lines)
+
+
+def test_control_list_includes_link_destination():
+    lines = _control_lines(
+        [{"number": 1, "tag": "a", "label": "Open page", "href": "https://example.org"}],
+        40,
+    )
+
+    assert any("Open page" in line for line in lines)
+    assert any("https://example.org" in line for line in lines)
+
+
+def test_lightweight_mode_blocks_visual_resources():
+    calls = []
+    browser = ChromePage("https://example.org")
+    browser.command = lambda method, params=None: calls.append((method, params))
+
+    browser.configure_resource_loading()
+
+    assert [method for method, _ in calls] == ["Network.enable", "Network.setBlockedURLs"]
+    blocked_types = {
+        pattern["resourceType"]
+        for pattern in calls[1][1]["urlPatterns"]
+    }
+    assert blocked_types == {"Image", "Media", "Font"}
+
+
+def test_visual_resources_can_be_enabled_for_compatibility():
+    calls = []
+    browser = ChromePage("https://example.org", load_visual_resources=True)
+    browser.command = lambda method, params=None: calls.append(method)
+
+    browser.configure_resource_loading()
+
+    assert calls == []
 
 
 @pytest.mark.parametrize("source", ["file:///etc/passwd", "ftp://example.org", "https:///missing-host"])

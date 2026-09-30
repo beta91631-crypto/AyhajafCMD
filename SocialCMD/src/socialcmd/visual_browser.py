@@ -1,9 +1,9 @@
-"""Render social sites in a true-color terminal pixel grid."""
+"""Browse web pages as readable text in a terminal."""
 
 from __future__ import annotations
 
 import argparse
-import base64
+from functools import lru_cache
 from http.client import HTTPConnection
 import json
 import math
@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import textwrap
 from pathlib import Path
 from typing import Any
 from unicodedata import category
@@ -23,17 +24,11 @@ from websockets.exceptions import WebSocketException
 from websockets.sync.client import connect
 
 from socialcmd.setup import enable_ansi
-from socialcmd.visual_terminal import (
-    prepare_terminal_pixels,
-    render_control_markers,
-    render_rgb_frame,
-)
 
 
-VIEWPORT_WIDTH = 1280
-VIEWPORT_HEIGHT = 720
-DEFAULT_FPS = 8
-MAX_FPS = 15
+VIEWPORT_WIDTH = 1024
+VIEWPORT_HEIGHT = 768
+MAX_PAGE_TEXT = 50_000
 PLATFORMS = {
     "facebook": "https://www.facebook.com/",
     "instagram": "https://www.instagram.com/",
@@ -45,12 +40,11 @@ PLATFORMS = {
     "x": "https://x.com/",
 }
 PLATFORM_ALIASES = {"fb": "facebook", "ig": "instagram", "twitter": "x"}
-MAX_SCREENSHOT_BYTES = 16 * 1024 * 1024
 MAX_CDP_MESSAGE_BYTES = 32 * 1024 * 1024
 MAX_INTERACTIVE_ELEMENTS = 40
 INTERACTIVE_SCRIPT = r"""(() => {
   const selectors = 'a[href],button,input:not([type="hidden"]),textarea,select,[role="button"],[role="link"],[tabindex]:not([tabindex="-1"]),video';
-    const candidates = Array.from(document.querySelectorAll(selectors)).slice(0, 3000);
+        const candidates = Array.from(document.querySelectorAll(selectors)).slice(0, 1000);
     const offset = Math.max(0, Number(window.__socialcmdOffset) || 0);
   const targets = [];
   const items = [];
@@ -60,8 +54,7 @@ INTERACTIVE_SCRIPT = r"""(() => {
     const style = getComputedStyle(element);
     const rect = element.getBoundingClientRect();
     if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0 ||
-        rect.width < 3 || rect.height < 3 || rect.right <= 0 || rect.bottom <= 0 ||
-        rect.left >= innerWidth || rect.top >= innerHeight || element.disabled) continue;
+        rect.width < 3 || rect.height < 3 || element.getClientRects().length === 0 || element.disabled) continue;
         if (visibleCount < offset) {
             visibleCount += 1;
             continue;
@@ -75,7 +68,8 @@ INTERACTIVE_SCRIPT = r"""(() => {
       element.getAttribute('alt') || element.tagName).replace(/\s+/g, ' ').trim().slice(0, 100);
     targets.push(element);
         visibleCount += 1;
-    items.push({number: targets.length, tag: element.tagName.toLowerCase(), label,
+        items.push({number: targets.length, tag: element.tagName.toLowerCase(), label,
+            href: element.href || '', type: element.type || '',
       x: Math.max(0, rect.left), y: Math.max(0, rect.top),
       width: Math.min(rect.right, innerWidth) - Math.max(0, rect.left),
       height: Math.min(rect.bottom, innerHeight) - Math.max(0, rect.top)});
@@ -83,6 +77,35 @@ INTERACTIVE_SCRIPT = r"""(() => {
     window.__socialcmdTargets = targets;
     return {items, hasMore, offset, url: location.href.slice(0, 2048)};
 })()"""
+PAGE_CONTENT_SCRIPT = r"""(() => {
+    const body = document.body;
+    const text = body ? body.innerText : '';
+    return {
+        title: document.title || '',
+        url: location.href.slice(0, 2048),
+        text: text.slice(0, 50000),
+        truncated: text.length > 50000
+    };
+})()"""
+HELP_TEXT = """SOCIALCMD CONTROLS
+
+g URL       Open an address or search words
+/words      Search the web
+back / b    Go back
+forward / f Go forward
+reload / r  Reload this page
+home        Open the default home site
+links       List page links, buttons, and form controls
+N           Activate control number N from the links list
+h N         Hover control number N
+more / prev Show another page of controls
+find WORDS  Find text in the current page
+update      Refresh the text and links without reloading
+up / down   Scroll the page and its text view
+t TEXT      Type into the focused page control
+enter       Activate the focused page control
+page        Return from Help to the page text
+q           Quit SocialCMD"""
 
 
 class VisualBrowserError(RuntimeError):
@@ -147,11 +170,17 @@ def _find_browser() -> tuple[str, str] | None:
 
 
 class ChromePage:
-    def __init__(self, url: str, private: bool = False):
+    def __init__(
+        self,
+        url: str,
+        private: bool = False,
+        load_visual_resources: bool = False,
+    ):
         self.url = url
         self.label = ""
         self._profile: tempfile.TemporaryDirectory | None = None
         self._private = private
+        self._load_visual_resources = load_visual_resources
         self._process: subprocess.Popen | None = None
         self._socket: Any = None
         self._command_id = 0
@@ -177,9 +206,15 @@ class ChromePage:
             "--remote-debugging-address=127.0.0.1",
             "--remote-debugging-port=0",
             f"--user-data-dir={profile_path}",
+            "--disable-background-networking",
+            "--disable-default-apps",
+            "--disable-extensions",
+            "--disable-gpu",
+            "--disable-sync",
+            "--mute-audio",
             "--no-first-run",
             "--no-default-browser-check",
-            "--autoplay-policy=no-user-gesture-required",
+            "--autoplay-policy=user-gesture-required",
             f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
             "about:blank",
         ]
@@ -215,6 +250,7 @@ class ChromePage:
                 raise VisualBrowserError("Could not connect to the browser's local page session.") from error
             self.command("Page.enable")
             self.command("Runtime.enable")
+            self.configure_resource_loading()
             self.command("Emulation.setDeviceMetricsOverride", {
                 "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
                 "deviceScaleFactor": 1, "mobile": False,
@@ -303,6 +339,18 @@ class ChromePage:
         remote = result.get("result", {})
         return remote.get("value") if isinstance(remote, dict) else None
 
+    def configure_resource_loading(self) -> None:
+        if self._load_visual_resources:
+            return
+        self.command("Network.enable")
+        self.command("Network.setBlockedURLs", {
+            "urlPatterns": [
+                {"urlPattern": "*", "resourceType": "Image"},
+                {"urlPattern": "*", "resourceType": "Media"},
+                {"urlPattern": "*", "resourceType": "Font"},
+            ],
+        })
+
     def navigate(self, url: str) -> None:
         result = self.command("Page.navigate", {"url": url})
         if result.get("errorText"):
@@ -339,14 +387,42 @@ class ChromePage:
         self._target_offset = max(0, int(result.get("offset", 0) or 0))
         return self._targets
 
-    def click(self, number: int) -> str:
+    def page_content(self) -> dict[str, Any]:
+        result = self.evaluate(PAGE_CONTENT_SCRIPT)
+        if not isinstance(result, dict):
+            raise VisualBrowserError("The page returned invalid text content.")
+        self.url = str(result.get("url") or self.url)[:2048]
+        return {
+            "title": str(result.get("title") or "Untitled page")[:500],
+            "url": self.url,
+            "text": str(result.get("text") or "")[:MAX_PAGE_TEXT],
+            "truncated": bool(result.get("truncated")),
+        }
+
+    def _target_coordinates(self, number: int) -> tuple[float, float]:
         if not 1 <= number <= len(self._targets):
-            raise VisualBrowserError("That number is not on the current page.")
-        target = self._targets[number - 1]
-        x = float(target.get("x", 0)) + float(target.get("width", 0)) / 2
-        y = float(target.get("y", 0)) + float(target.get("height", 0)) / 2
+            raise VisualBrowserError("That number is not in the current links list.")
+        index = number - 1
+        position = self.evaluate(
+            "(() => {"
+            f"const element = window.__socialcmdTargets[{index}];"
+            "if (!element) return null;"
+            "element.scrollIntoView({block: 'center', inline: 'nearest', behavior: 'instant'});"
+            "const rect = element.getBoundingClientRect();"
+            "return {x: rect.left + rect.width / 2, y: rect.top + rect.height / 2};"
+            "})()"
+        )
+        if not isinstance(position, dict):
+            raise VisualBrowserError("That page control is no longer available.")
+        x = float(position.get("x", 0))
+        y = float(position.get("y", 0))
         if not math.isfinite(x) or not math.isfinite(y):
             raise VisualBrowserError("That page control has invalid coordinates.")
+        return x, y
+
+    def click(self, number: int) -> str:
+        x, y = self._target_coordinates(number)
+        target = self._targets[number - 1]
         self.command("Input.dispatchMouseEvent", {
             "type": "mousePressed", "x": x, "y": y,
             "button": "left", "clickCount": 1,
@@ -359,11 +435,8 @@ class ChromePage:
         return f"Clicked {number}: {label}"
 
     def hover(self, number: int) -> str:
-        if not 1 <= number <= len(self._targets):
-            raise VisualBrowserError("That number is not on the current page.")
+        x, y = self._target_coordinates(number)
         target = self._targets[number - 1]
-        x = float(target.get("x", 0)) + float(target.get("width", 0)) / 2
-        y = float(target.get("y", 0)) + float(target.get("height", 0)) / 2
         self.command("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": x, "y": y})
         label = str(target.get("label", target.get("tag", "control")))[:80]
         return f"Hovering {number}: {label}"
@@ -379,22 +452,6 @@ class ChromePage:
             raise VisualBrowserError("Control page must be next or previous.")
         self.evaluate(f"window.__socialcmdOffset = {self._target_offset}")
         return f"Showing controls {self._target_offset + 1}-{self._target_offset + MAX_INTERACTIVE_ELEMENTS}"
-
-    def screenshot(self) -> str:
-        result = self.command("Page.captureScreenshot", {
-            "format": "jpeg", "quality": 85, "fromSurface": True,
-            "captureBeyondViewport": False,
-        })
-        data = result.get("data")
-        if not isinstance(data, str) or len(data) > MAX_SCREENSHOT_BYTES * 2:
-            raise VisualBrowserError("The browser returned an invalid or oversized screenshot.")
-        try:
-            decoded = base64.b64decode(data, validate=True)
-        except (ValueError, base64.binascii.Error) as error:
-            raise VisualBrowserError("The browser returned malformed screenshot data.") from error
-        if not decoded.startswith(b"\xff\xd8\xff") or len(decoded) > MAX_SCREENSHOT_BYTES:
-            raise VisualBrowserError("The browser returned an invalid screenshot image.")
-        return data
 
     def type_text(self, text: str) -> None:
         if len(text) > 1000:
@@ -428,6 +485,27 @@ class ChromePage:
             f"window.__socialcmdOffset = 0; "
             f"window.scrollBy({{top: {amount}, behavior: 'instant'}})"
         )
+
+    def navigate_history(self, direction: str) -> str:
+        if direction not in {"back", "forward"}:
+            raise VisualBrowserError("History direction must be back or forward.")
+        history = self.command("Page.getNavigationHistory")
+        entries = history.get("entries", [])
+        current_index = history.get("currentIndex")
+        delta = -1 if direction == "back" else 1
+        target_index = current_index + delta if isinstance(current_index, int) else -1
+        if not isinstance(entries, list) or not 0 <= target_index < len(entries):
+            return f"No page to go {direction}"
+        entry_id = entries[target_index].get("id")
+        if not isinstance(entry_id, int):
+            return f"No page to go {direction}"
+        self.command("Page.navigateToHistoryEntry", {"entryId": entry_id})
+        return f"Going {direction}"
+
+    def find_text(self, query: str) -> bool:
+        if not query.strip():
+            raise VisualBrowserError("Enter text to find on this page.")
+        return bool(self.evaluate(f"window.find({json.dumps(query[:200])})"))
 
     def close(self) -> None:
         if self._socket is not None:
@@ -519,99 +597,192 @@ def _safe_status(value: str, limit: int = 160) -> str:
     )[:limit]
 
 
+def _clean_page_text(value: str) -> str:
+    return "".join(
+        char if char in "\n\t" or (char.isprintable() and category(char) not in {"Cf", "Cs"}) else " "
+        for char in value[:MAX_PAGE_TEXT]
+    )
+
+
+@lru_cache(maxsize=4)
+def _page_lines(value: str, width: int) -> tuple[str, ...]:
+    lines: list[str] = []
+    for line in _clean_page_text(value).splitlines():
+        line = line.expandtabs(4).strip()
+        if not line:
+            lines.append("")
+            continue
+        lines.extend(textwrap.wrap(
+            line,
+            width=max(1, width),
+            break_long_words=True,
+            break_on_hyphens=False,
+            replace_whitespace=False,
+            drop_whitespace=True,
+        ) or [""])
+    return tuple(lines)
+
+
+def _control_lines(elements: list[dict[str, Any]], width: int) -> list[str]:
+    if not elements:
+        return ["No interactive controls found on this page."]
+    lines = ["INTERACTIVE CONTROLS  |  Enter a number to activate"]
+    for item in elements:
+        number = int(item.get("number", 0))
+        tag = _safe_status(str(item.get("tag", "control")), 12)
+        label = _safe_status(str(item.get("label", "")), max(1, width - 20))
+        lines.extend(_page_lines(f"{number:>2}. [{tag}] {label}", width))
+        href = item.get("href")
+        if isinstance(href, str) and href:
+            lines.extend(_page_lines(f"    {href}", width))
+    return lines
+
+
 def _write_terminal(
     browser: ChromePage,
     command_buffer: str,
     status: str,
     columns: int,
     rows: int,
+    page: dict[str, Any],
+    elements: list[dict[str, Any]],
+    links_mode: bool,
+    page_offset: int,
 ) -> None:
-    elements = browser.visible_elements()
-    screenshot = browser.screenshot()
-    pixels, width, height, markers = prepare_terminal_pixels(
-        screenshot, elements, columns, rows, VIEWPORT_WIDTH, VIEWPORT_HEIGHT
-    )
-    page = render_rgb_frame(pixels, width, height)
-    page_rows = height // 2
-    page += render_control_markers(markers, width, page_rows)
+    width = max(1, columns)
+    body_rows = max(1, rows - 8)
+    title = _safe_status(str(page.get("title") or "Untitled page"), width)
+    if status == "Help":
+        content = list(_page_lines(HELP_TEXT, width))
+    elif links_mode:
+        content = _control_lines(elements, width)
+    else:
+        content = list(_page_lines(str(page.get("text") or ""), width))
+        if not content:
+            content = ["This page has no readable text. Type 'links' to inspect its controls."]
+        if page.get("truncated"):
+            content.append("[Page text shortened to keep memory use bounded.]")
+    page_offset = min(max(0, page_offset), max(0, len(content) - body_rows))
+    visible_content = content[page_offset:page_offset + body_rows]
+    visible_content.extend([""] * (body_rows - len(visible_content)))
+    header = f"SOCIALCMD :: {browser.label or 'browser'}"
     status_line = _safe_status(
-        f"{browser.url} | {status} | {len(elements)} controls marked", columns
+        f"{status} | {len(elements)} controls | line {page_offset + 1}/{max(1, len(content))}",
+        width,
     )
-    help_line = _safe_status("N click | h N hover | more/prev controls | /search web | g URL | t text | arrows scroll | q quit", columns)
-    prompt_line = _safe_status("> " + command_buffer, columns)
-    output = ["\x1b[H", page, "\x1b[0m"]
-    output.extend((
-        f"\x1b[{page_rows + 1};1H\x1b[2K{status_line}",
-        f"\x1b[{page_rows + 2};1H\x1b[2K{help_line}",
-        f"\x1b[{page_rows + 3};1H\x1b[2K{prompt_line}",
-    ))
+    help_line = "g URL  /search  back  forward  reload  home  links  find TEXT  up/down  q quit"
+    screen_lines = [
+        (header, "\x1b[1;36m"),
+        (_safe_status(f"URL: {browser.url}", width), "\x1b[32m"),
+        (_safe_status(f"PAGE: {title}", width), "\x1b[1;33m"),
+        ("=" * width, "\x1b[2;36m"),
+        *((line, "") for line in visible_content),
+        ("=" * width, "\x1b[2;36m"),
+        (status_line, "\x1b[1;36m"),
+        (help_line[:width], "\x1b[2m"),
+        (_safe_status("> " + command_buffer, width), "\x1b[1m"),
+    ]
+    output: list[str] = []
+    for row, (line, style) in enumerate(screen_lines[:rows], start=1):
+        output.append(f"\x1b[{row};1H\x1b[2K{style}{line[:width]}\x1b[0m")
     sys.stdout.write("".join(output))
     sys.stdout.flush()
 
 
-def _run_command(browser: ChromePage, command: str) -> tuple[str, bool]:
+def _run_command(
+    browser: ChromePage,
+    command: str,
+    links_mode: bool,
+) -> tuple[str, bool, bool]:
     command = command.strip()
     lowered = command.lower()
     if lowered in {"q", "quit", ":quit"}:
-        return "Closing SocialCMD", False
+        return "Closing SocialCMD", False, links_mode
+    if not command:
+        return "Ready", True, links_mode
+    if lowered in {"links", ":links"}:
+        return "Interactive controls", True, True
+    if lowered in {"page", "text"}:
+        return "Page text", True, False
+    if lowered == "help":
+        return "Help", True, False
+    if lowered == "update":
+        return "Page text updated", True, links_mode
     if lowered.startswith("/"):
         query = command[1:].strip()
         if not query:
-            return "Enter search words after /", True
+            return "Enter search words after /", True, links_mode
         browser.navigate(resolve_social_input(query))
-        return f"Searching the web: {query[:100]}", True
+        return f"Searching the web: {query[:100]}", True, False
     if lowered.startswith("g "):
         browser.navigate(resolve_social_input(command[2:]))
-        return "Page loaded", True
+        return "Page loaded", True, False
     if lowered.startswith("t "):
         browser.type_text(command[2:])
-        return "Text entered in focused page control; use 'enter' to submit", True
+        return "Text entered; use 'enter' to submit", True, links_mode
     if lowered.startswith("h "):
         try:
             number = int(command[2:].strip())
         except ValueError:
-            return "Use h followed by a visible control number", True
-        return browser.hover(number), True
+            return "Use h followed by a control number", True, links_mode
+        return browser.hover(number), True, links_mode
     if lowered in {"more", "prev"}:
         direction = "next" if lowered == "more" else "previous"
-        return browser.page_controls(direction), True
+        return browser.page_controls(direction), True, True
     if lowered in {"enter", "space", "tab", "escape", "backspace"}:
         browser.press_key(lowered)
-        return f"Sent {lowered}", True
+        return f"Sent {lowered}", True, links_mode
     if lowered in {"up", "down"}:
         browser.scroll(lowered)
-        return f"Scrolled {lowered}", True
+        return f"Scrolled {lowered}", True, links_mode
+    if lowered in {"back", "b"}:
+        return browser.navigate_history("back"), True, False
+    if lowered in {"forward", "f"}:
+        return browser.navigate_history("forward"), True, False
+    if lowered == "home":
+        browser.navigate(PLATFORMS["reddit"])
+        return "Home page loaded", True, False
     if lowered in {"r", "reload"}:
         browser.command("Page.reload", {"ignoreCache": False})
-        return "Reloading page", True
+        return "Reloading page", True, links_mode
+    if lowered.startswith("find "):
+        found = browser.find_text(command[5:])
+        return ("Text found" if found else "Text not found"), True, links_mode
     if command.isdigit():
-        return browser.click(int(command)), True
-    return "Unknown command. Use a marker number, /search, g URL, t text, or q.", True
+        return browser.click(int(command)), True, links_mode
+    return "Unknown command. Use g URL, /search, links, find TEXT, or q.", True, links_mode
 
 
 def run_social_browser(
     source: str | None = None,
-    fps: int = DEFAULT_FPS,
     private: bool = False,
+    load_visual_resources: bool = False,
 ) -> int:
-    if not 1 <= fps <= MAX_FPS:
-        raise VisualBrowserError(f"Refresh rate must be between 1 and {MAX_FPS} FPS.")
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if not enable_ansi():
         raise VisualBrowserError("Run this mode in Windows Terminal or an ANSI-compatible terminal.")
     url = resolve_social_input(source)
     columns, rows = _terminal_size()
-    with ChromePage(url, private=private) as browser, _TerminalInput():
+    with ChromePage(
+        url,
+        private=private,
+        load_visual_resources=load_visual_resources,
+    ) as browser, _TerminalInput():
         sys.stdout.write("\x1b[?25l\x1b[2J\x1b[H")
         sys.stdout.flush()
         command_buffer = ""
-        status = f"{browser.label} | true-color terminal view"
-        next_frame = 0.0
+        status = "Page loaded"
+        page = browser.page_content()
+        elements = browser.visible_elements()
+        links_mode = False
+        page_offset = 0
         running = True
+        screen_dirty = True
         try:
             while running:
                 key = _TerminalInput.poll()
+                page_dirty = False
                 if key == "\x03":
                     break
                 if key == "escape":
@@ -620,30 +791,53 @@ def run_social_browser(
                         status = "Sent escape to the webpage"
                     except VisualBrowserError as error:
                         status = str(error)
+                    page_dirty = True
                 elif key in ("up", "down") and not command_buffer:
                     try:
                         browser.scroll(key)
                         status = f"Scrolled {key}"
+                        page_offset = max(0, page_offset + (-max(1, rows - 8) if key == "up" else max(1, rows - 8)))
                     except VisualBrowserError as error:
                         status = str(error)
+                    page_dirty = True
                 elif key in ("\r", "\n"):
                     try:
-                        status, running = _run_command(browser, command_buffer)
+                        old_url = browser.url
+                        status, running, links_mode = _run_command(browser, command_buffer, links_mode)
+                        if browser.url != old_url:
+                            page_offset = 0
                     except VisualBrowserError as error:
                         status = str(error)
                     command_buffer = ""
-                    next_frame = 0.0
+                    page_dirty = True
+                    screen_dirty = True
                 elif key in ("\b", "\x7f"):
                     command_buffer = command_buffer[:-1]
+                    screen_dirty = True
                 elif key and len(key) == 1 and key.isprintable() and len(command_buffer) < 256:
                     command_buffer += key
+                    screen_dirty = True
 
                 now = time.monotonic()
-                if running and now >= next_frame:
+                if running and page_dirty:
+                    page = browser.page_content()
+                    elements = browser.visible_elements()
+                    screen_dirty = True
+                if running and screen_dirty:
                     columns, rows = _terminal_size()
-                    _write_terminal(browser, command_buffer, status, columns, rows)
-                    next_frame = now + 1.0 / fps
-                time.sleep(0.01)
+                    _write_terminal(
+                        browser,
+                        command_buffer,
+                        status,
+                        columns,
+                        rows,
+                        page,
+                        elements,
+                        links_mode,
+                        page_offset,
+                    )
+                    screen_dirty = False
+                time.sleep(0.05)
         finally:
             sys.stdout.write("\x1b[0m\x1b[?25h\x1b[2J\x1b[H")
             sys.stdout.flush()
@@ -651,16 +845,21 @@ def run_social_browser(
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Browse social sites in a true-color terminal")
+    parser = argparse.ArgumentParser(description="Browse web pages as readable text in a terminal")
     parser.add_argument("source", nargs="*", help="platform name, URL, or search words")
     parser.add_argument("--private", action="store_true", help="use a temporary browser profile")
     parser.add_argument(
-        "--fps", type=int, default=DEFAULT_FPS,
-        help=f"terminal refresh rate (1-{MAX_FPS} FPS, default {DEFAULT_FPS})",
+        "--load-visual-resources",
+        action="store_true",
+        help="allow page images, media, and web fonts for compatibility",
     )
     args = parser.parse_args(argv)
     try:
-        return run_social_browser(" ".join(args.source) or None, args.fps, args.private)
+        return run_social_browser(
+            " ".join(args.source) or None,
+            args.private,
+            args.load_visual_resources,
+        )
     except KeyboardInterrupt:
         sys.stdout.write("\x1b[0m\x1b[?25h\x1b[2J\x1b[H")
         return 0
