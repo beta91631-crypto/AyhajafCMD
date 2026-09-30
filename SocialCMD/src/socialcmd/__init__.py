@@ -1,0 +1,1 @@
+"""Social media browsing in the terminal."""
