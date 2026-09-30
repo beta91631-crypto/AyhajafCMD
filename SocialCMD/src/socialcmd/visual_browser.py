@@ -10,6 +10,7 @@ import math
 import os
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -137,6 +138,12 @@ def _profile_directory() -> Path:
     return root / "SocialCMD" / "browser-profile"
 
 
+def _reserve_debug_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as endpoint:
+        endpoint.bind(("127.0.0.1", 0))
+        return int(endpoint.getsockname()[1])
+
+
 def _find_browser() -> tuple[str, str] | None:
     for label, names in (
         ("Edge", ("msedge", "msedge.exe")),
@@ -200,11 +207,12 @@ class ChromePage:
             persistent_profile = _profile_directory()
             persistent_profile.mkdir(parents=True, exist_ok=True)
             profile_path = str(persistent_profile)
+        port = _reserve_debug_port()
         arguments = [
             browser_path,
             "--headless=new",
             "--remote-debugging-address=127.0.0.1",
-            "--remote-debugging-port=0",
+            f"--remote-debugging-port={port}",
             f"--user-data-dir={profile_path}",
             "--disable-background-networking",
             "--disable-default-apps",
@@ -231,7 +239,6 @@ class ChromePage:
             options["start_new_session"] = True
         try:
             self._process = subprocess.Popen(arguments, **options)
-            port = self._wait_for_debug_port(profile_path)
             targets = self._wait_for_page_list(port)
             endpoint = next((item.get("webSocketDebuggerUrl") for item in targets
                              if isinstance(item, dict) and item.get("type") == "page"), None)
@@ -280,22 +287,6 @@ class ChromePage:
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
             raise VisualBrowserError("The browser returned malformed debugging data.") from error
 
-    def _wait_for_debug_port(self, profile_path: str) -> int:
-        assert self._process is not None
-        active_port = Path(profile_path) / "DevToolsActivePort"
-        deadline = time.monotonic() + 15
-        while time.monotonic() < deadline:
-            if self._process.poll() is not None:
-                raise VisualBrowserError(f"{self.label} exited during startup.")
-            try:
-                port = int(active_port.read_text(encoding="ascii").splitlines()[0])
-                if 1 <= port <= 65535:
-                    return port
-            except (OSError, ValueError, IndexError):
-                pass
-            time.sleep(0.05)
-        raise VisualBrowserError(f"{self.label} did not start its local browser endpoint.")
-
     def _wait_for_page_list(self, port: int) -> list[dict[str, Any]]:
         assert self._process is not None
         deadline = time.monotonic() + 15
@@ -307,13 +298,22 @@ class ChromePage:
                 targets = self._get_json(port, "/json/list")
                 if not isinstance(targets, list):
                     raise VisualBrowserError("The browser returned an invalid page list.")
-                return targets
+                if any(
+                    isinstance(item, dict)
+                    and item.get("type") == "page"
+                    and isinstance(item.get("webSocketDebuggerUrl"), str)
+                    for item in targets
+                ):
+                    return targets
+                last_error = VisualBrowserError("The browser has not created a page target yet.")
             except VisualBrowserError as error:
                 if str(error) != "Could not contact the local browser endpoint.":
                     raise
                 last_error = error
             time.sleep(0.1)
-        raise VisualBrowserError(f"{self.label} did not start its local browser endpoint.") from last_error
+        raise VisualBrowserError(
+            f"{self.label} did not expose a page through its local endpoint on port {port}."
+        ) from last_error
 
     def command(self, method: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
         if self._socket is None:

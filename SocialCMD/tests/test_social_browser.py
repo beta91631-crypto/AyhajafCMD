@@ -1,3 +1,5 @@
+import socket
+
 import pytest
 
 from socialcmd.visual_browser import (
@@ -6,6 +8,7 @@ from socialcmd.visual_browser import (
     VisualBrowserError,
     _control_lines,
     _page_lines,
+    _reserve_debug_port,
     resolve_social_input,
 )
 
@@ -40,17 +43,10 @@ def test_search_text_is_encoded():
     assert resolve_social_input("cats and dogs") == "https://duckduckgo.com/?q=cats+and+dogs"
 
 
-def test_wait_for_debug_port_reads_selected_profile(tmp_path):
-    (tmp_path / "DevToolsActivePort").write_text("9222\n/devtools/browser/test", encoding="ascii")
-
-    class RunningProcess:
-        def poll(self):
-            return None
-
-    browser = ChromePage("https://reddit.com/")
-    browser._process = RunningProcess()
-
-    assert browser._wait_for_debug_port(str(tmp_path)) == 9222
+def test_debug_port_is_available_on_loopback():
+    port = _reserve_debug_port()
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as endpoint:
+        endpoint.bind(("127.0.0.1", port))
 
 
 def test_wait_for_page_list_retries_connection_refused(monkeypatch):
@@ -73,6 +69,60 @@ def test_wait_for_page_list_retries_connection_refused(monkeypatch):
     monkeypatch.setattr("socialcmd.visual_browser.time.sleep", lambda _: None)
 
     assert browser._wait_for_page_list(9222) == [{"type": "page"}]
+
+
+def test_wait_for_page_list_retries_until_page_target_exists(monkeypatch):
+    class RunningProcess:
+        def poll(self):
+            return None
+
+    responses = iter(([], [{"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/page/1"}]))
+    browser = ChromePage("https://reddit.com/")
+    browser.label = "Chrome"
+    browser._process = RunningProcess()
+    browser._get_json = lambda port, path: next(responses)
+    monkeypatch.setattr("socialcmd.visual_browser.time.sleep", lambda _: None)
+
+    assert browser._wait_for_page_list(9222) == [
+        {"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/page/1"}
+    ]
+
+
+def test_browser_launch_uses_reserved_debug_port(monkeypatch):
+    port = 9321
+    launch_arguments = []
+    waited_ports = []
+
+    class ExitedProcess:
+        def poll(self):
+            return 0
+
+    class FakeSocket:
+        def close(self):
+            pass
+
+    monkeypatch.setattr("socialcmd.visual_browser._find_browser", lambda: ("Edge", "msedge.exe"))
+    monkeypatch.setattr("socialcmd.visual_browser._reserve_debug_port", lambda: port)
+    monkeypatch.setattr(
+        "socialcmd.visual_browser.subprocess.Popen",
+        lambda arguments, **options: launch_arguments.extend(arguments) or ExitedProcess(),
+    )
+    monkeypatch.setattr(
+        ChromePage,
+        "_wait_for_page_list",
+        lambda self, actual_port: waited_ports.append(actual_port) or [
+            {"type": "page", "webSocketDebuggerUrl": f"ws://127.0.0.1:{port}/devtools/page/1"}
+        ],
+    )
+    monkeypatch.setattr("socialcmd.visual_browser.connect", lambda *args, **kwargs: FakeSocket())
+    monkeypatch.setattr(ChromePage, "command", lambda self, method, params=None: {})
+    monkeypatch.setattr(ChromePage, "navigate", lambda self, url: None)
+
+    with ChromePage("https://reddit.com/", private=True):
+        pass
+
+    assert f"--remote-debugging-port={port}" in launch_arguments
+    assert waited_ports == [port]
 
 
 def test_page_text_wraps_and_removes_terminal_escape_sequences():
