@@ -53,6 +53,28 @@ def test_wait_for_debug_port_reads_selected_profile(tmp_path):
     assert browser._wait_for_debug_port(str(tmp_path)) == 9222
 
 
+def test_wait_for_page_list_retries_connection_refused(monkeypatch):
+    class RunningProcess:
+        def poll(self):
+            return None
+
+    responses = [
+        VisualBrowserError("Could not contact the local browser endpoint."),
+        [{"type": "page"}],
+    ]
+    browser = ChromePage("https://reddit.com/")
+    browser.label = "Chrome"
+    browser._process = RunningProcess()
+    browser._get_json = lambda port, path: (
+        (_ for _ in ()).throw(responses.pop(0))
+        if isinstance(responses[0], Exception)
+        else responses.pop(0)
+    )
+    monkeypatch.setattr("socialcmd.visual_browser.time.sleep", lambda _: None)
+
+    assert browser._wait_for_page_list(9222) == [{"type": "page"}]
+
+
 def test_page_text_wraps_and_removes_terminal_escape_sequences():
     lines = _page_lines("A readable heading\n\x1b[31mhidden formatting", 12)
 
