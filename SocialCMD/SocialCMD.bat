@@ -7,10 +7,10 @@ if not exist ".venv\Scripts\python.exe" (
     if errorlevel 1 goto failed
 )
 
-if not exist ".venv\SocialCMD-deps" (
+".venv\Scripts\python.exe" -c "import PIL, websockets" >nul 2>&1
+if errorlevel 1 (
     ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
     if errorlevel 1 goto failed
-    type nul > ".venv\SocialCMD-deps"
 )
 
 set "PYTHONPATH=%CD%\src"

@@ -1,14 +1,18 @@
+import base64
+from io import BytesIO
 import socket
 
 import pytest
+from PIL import Image
 
+from socialcmd.visual_terminal import prepare_terminal_pixels
 from socialcmd.visual_browser import (
     PLATFORMS,
     ChromePage,
     VisualBrowserError,
-    _control_lines,
-    _page_lines,
+    _render_browser_frame,
     _reserve_debug_port,
+    choose_start_url,
     resolve_social_input,
 )
 
@@ -31,8 +35,22 @@ def test_platform_shortcuts(source, platform):
     assert resolve_social_input(source) == PLATFORMS[platform]
 
 
-def test_empty_input_opens_default_platform():
-    assert resolve_social_input(None) == PLATFORMS["reddit"]
+def test_empty_input_requires_a_user_choice():
+    with pytest.raises(VisualBrowserError, match="Choose a social site"):
+        resolve_social_input(None)
+
+
+def test_site_menu_uses_the_selected_platform(monkeypatch):
+    monkeypatch.setattr("builtins.input", lambda _: "6")
+
+    assert choose_start_url() == PLATFORMS["threads"]
+
+
+def test_site_menu_accepts_a_custom_url(monkeypatch):
+    answers = iter(("u", "https://example.org/feed"))
+    monkeypatch.setattr("builtins.input", lambda _: next(answers))
+
+    assert choose_start_url() == "https://example.org/feed"
 
 
 def test_http_url_is_opened_directly():
@@ -56,7 +74,7 @@ def test_wait_for_page_list_retries_connection_refused(monkeypatch):
 
     responses = [
         VisualBrowserError("Could not contact the local browser endpoint."),
-        [{"type": "page"}],
+        [{"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/1"}],
     ]
     browser = ChromePage("https://reddit.com/")
     browser.label = "Chrome"
@@ -68,7 +86,9 @@ def test_wait_for_page_list_retries_connection_refused(monkeypatch):
     )
     monkeypatch.setattr("socialcmd.visual_browser.time.sleep", lambda _: None)
 
-    assert browser._wait_for_page_list(9222) == [{"type": "page"}]
+    assert browser._wait_for_page_list(9222) == [
+        {"type": "page", "webSocketDebuggerUrl": "ws://127.0.0.1:9222/devtools/page/1"}
+    ]
 
 
 def test_wait_for_page_list_retries_until_page_target_exists(monkeypatch):
@@ -146,21 +166,37 @@ def test_browser_command_error_includes_method_name():
         browser.command("Page.enable")
 
 
-def test_page_text_wraps_and_removes_terminal_escape_sequences():
-    lines = _page_lines("A readable heading\n\x1b[31mhidden formatting", 12)
+def test_rgb_frame_preserves_full_color_and_control_markers():
+    source = BytesIO()
+    Image.new("RGB", (8, 4), (235, 40, 170)).save(source, format="PNG")
+    screenshot = base64.b64encode(source.getvalue()).decode("ascii")
 
-    assert lines[0] == "A readable"
-    assert all("\x1b" not in line for line in lines)
-
-
-def test_control_list_includes_link_destination():
-    lines = _control_lines(
-        [{"number": 1, "tag": "a", "label": "Open page", "href": "https://example.org"}],
+    frame, footer_row = _render_browser_frame(
+        screenshot,
+        [{"number": 1, "x": 100, "y": 100, "width": 200, "height": 100}],
         40,
+        12,
     )
 
-    assert any("Open page" in line for line in lines)
-    assert any("https://example.org" in line for line in lines)
+    assert footer_row == 9
+    assert "\x1b[38;2;235;40;170m" in frame
+    assert "\x1b[48;2;235;40;170m" in frame
+    assert " 1 " in frame
+
+
+def test_terminal_scaling_keeps_pixel_colors_crisp():
+    image = Image.new("RGB", (2, 1))
+    image.putpixel((0, 0), (255, 0, 0))
+    image.putpixel((1, 0), (0, 0, 255))
+    encoded = BytesIO()
+    image.save(encoded, format="PNG")
+
+    pixels, _, _, _ = prepare_terminal_pixels(
+        base64.b64encode(encoded.getvalue()).decode("ascii"), [], 8, 7, 2, 1
+    )
+
+    colors = {tuple(pixels[index:index + 3]) for index in range(0, len(pixels), 3)}
+    assert colors <= {(255, 0, 0), (0, 0, 255), (0, 0, 0)}
 
 
 @pytest.mark.parametrize("source", ["file:///etc/passwd", "ftp://example.org", "https:///missing-host"])
