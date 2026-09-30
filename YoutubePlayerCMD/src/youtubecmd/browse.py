@@ -78,12 +78,17 @@ def _duration_text(seconds: int | None) -> str:
     return f"{minutes}:{remaining:02d}"
 
 
+def _prompt_input(prompt: str) -> str:
+    print(prompt, end="", file=sys.stderr, flush=True)
+    return input()
+
+
 def _prompt_video_quality() -> int | None:
     quality_limits = {"1": 360, "2": 480, "3": 720, "4": 1080, "5": None}
     print("\nSource quality", file=sys.stderr)
     print("  1. 360p   2. 480p   3. 720p   4. 1080p   5. Best available", file=sys.stderr)
     while True:
-        choice = input("Choose quality [3]: ").strip() or "3"
+        choice = _prompt_input("Choose quality [3]: ").strip() or "3"
         if choice in quality_limits:
             return quality_limits[choice]
         print("Enter a number from 1 to 5.", file=sys.stderr)
@@ -105,7 +110,7 @@ def select_video(source: str) -> str | None:
             file=sys.stderr,
         )
     print("", file=sys.stderr)
-    choice = input(f"Choose a video (1-{len(videos)}, q to cancel): ").strip().lower()
+    choice = _prompt_input(f"Choose a video (1-{len(videos)}, q to cancel): ").strip().lower()
     if choice in {"q", "quit"}:
         return None
     try:
@@ -131,7 +136,7 @@ def main(argv: list[str] | None = None) -> int:
             source = args.source
         else:
             print("Search YouTube or paste a video URL.", file=sys.stderr)
-            source = input("> ").strip()
+            source = _prompt_input("> ").strip()
         url = select_video(source)
         if url is None:
             print("Playback cancelled.", file=sys.stderr)

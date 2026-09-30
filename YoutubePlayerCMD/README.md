@@ -1,22 +1,25 @@
 # YouTubeCMD
 
-YouTubeCMD is a Windows command-line YouTube player. Launch it from CMD or
-Windows Terminal; video opens in a separate resizable RGB pixel window.
+YouTubeCMD displays the real YouTube website inside Windows Terminal using
+24-bit color terminal pixels. Edge, Chrome, Chromium, or Brave renders the page;
+the app scales each screenshot to the terminal and marks visible controls with
+numbers you can activate from the command line.
 
 It uses:
-- Python and `yt-dlp` to extract stream URLs and metadata into a temporary JSON file
-- `renderer.exe`, a C++17 player with a native Windows pixel window
-- FFmpeg for video decoding and FFplay for audio
-- One independent RGB color per displayed pixel, plus legacy terminal modes
+- Python, Pillow, and the browser's local Chrome DevTools Protocol connection
+- The installed browser for YouTube's own search, playback, quality, and audio
+- ANSI 24-bit foreground/background colors, two image pixels per terminal cell
 
-Audio plays through the normal Windows audio device. The terminal remains available for
-launching the app; the video window handles display, resizing, and playback keys.
+The whole visible webpage, including video and audio, stays in the terminal
+view. `YouTubeCMD.bat --native` keeps the older FFmpeg/FFplay video player
+available as a fallback.
 
 ---
 
 ## What YouTubeCMD Does
 
-YouTubeCMD launches a resizable video window from a command-line terminal.
+YouTubeCMD launches an isolated headless browser and paints its live page into
+the terminal as full-color pixels.
 
 You run:
 
@@ -24,63 +27,45 @@ You run:
 YouTubeCMD.bat
 ```
 
-Then you paste a YouTube URL:
+The YouTube home page opens. You can also start from a search or video URL:
 
 ```text
-YouTube URL: https://www.youtube.com/watch?v=XXXXXXXXXXX
+YouTubeCMD.bat "Arryadia"
+YouTubeCMD.bat https://www.youtube.com/watch?v=VIDEO_ID
 ```
 
-YouTubeCMD then:
-1. Validates the URL.
-2. Extracts playable streams using `yt-dlp`.
-3. Starts audio playback.
-4. Decodes video frames with FFmpeg.
-5. Displays decoded RGB frames in a native Windows window.
-6. Keeps playback paced to the source FPS.
-7. Closes the video window cleanly when you quit.
+Search, select quality, captions, volume, and playback are the original YouTube
+controls. Number badges are drawn over visible interactive page elements.
 
 ---
 
 ## Important Limitation
 
-Text terminals cannot draw eight independently colored subpixels inside a text
-cell. The Windows launcher therefore uses GDI to display each decoded RGB pixel
-directly, without character glyphs. The older ASCII and half-block modes remain
-available when running the renderer manually.
+Terminal cells are not physical monitor pixels. The visual mode uses one Unicode
+half-block cell for two independently colored screenshot pixels, then scales the
+page to the current terminal size. A larger terminal gives the page more detail.
 
 ---
 
 ## Features
 
-- Launch playback from CMD / Windows Terminal
-- Resizable native video window with independent RGB pixels
-- Supports normal YouTube watch URLs
-- Supports `youtu.be` short URLs
-- Supports URLs with extra parameters
-- Automatic stream extraction
-- No manual stream URL input
-- Audio playback through Windows
-- Automatic video rescaling when the window is resized
-- Aspect-ratio preservation
-- HALF_BLOCK rendering mode
-- ASCII compatibility mode
-- Full RGB color per displayed pixel
-- Source video quality selection from 360p to 1080p or best available
-- Pause/resume
-- Seek forward/backward
-- Volume control
-- Restart
-- Quality adjustment
-- Keyboard playback controls while the video window is focused
-- Friendly error messages
+- Render YouTube's actual page and video in the terminal
+- Full RGB color via ANSI 24-bit colors
+- Numbered overlays for visible links, buttons, and form controls
+- Activate any marked control by entering its number
+- Use YouTube's own quality, audio, captions, and playback controls
+- Search from CMD or navigate to a URL
+- Scroll the live page and type into focused webpage controls
+- Adaptive terminal-sized screenshot rendering
+- Keep the previous FFmpeg/FFplay player with `--native`
 
 ---
 
 ## Requirements
 
 ### Operating System
-- Windows 10
-- Windows 11
+- Windows 10 or newer
+- Windows Terminal recommended; recent CMD with ANSI support may work
 
 ### Python
 Python 3.10 or newer is required.
@@ -103,12 +88,20 @@ During installation, make sure to enable:
 Add Python to PATH
 ```
 
-### C++ compiler
-The launcher builds the native player once. Install either MSVC Build Tools
-(recommended) or MinGW-w64 with `g++` available in PATH.
+The launcher installs Pillow and WebSockets into its local virtual environment
+for screenshot decoding and the browser's local control connection.
 
-### FFmpeg
-Install an FFmpeg build that includes both `ffmpeg` and `ffplay` and add it to PATH.
+### Browser
+Install Microsoft Edge, Chrome, Chromium, or Brave. YouTube runs in an isolated
+headless browser profile controlled through its local DevTools connection.
+
+### Terminal
+Windows Terminal is recommended for ANSI 24-bit color and Unicode half-blocks.
+The terminal should be at least 80 columns wide for a useful page view.
+
+### Native fallback requirements
+The optional `--native` player requires FFmpeg/FFplay and a C++17 compiler
+(MSVC Build Tools or MinGW-w64).
 
 Check with:
 
@@ -151,6 +144,8 @@ YouTubeCMD/
 	src/youtubecmd/
 		browse.py
 		extract.py
+		visual_browser.py
+		visual_terminal.py
 		player.py
 		renderer.py
 		streams.py
@@ -164,6 +159,8 @@ YouTubeCMD/
 	tests/
 		test_browse.py
 		test_extract.py
+		test_visual_browser.py
+		test_visual_terminal.py
 		test_native.py
 		test_renderer.py
 		test_url_validation.py
@@ -184,7 +181,8 @@ Double-click:
 YouTubeCMD.bat
 ```
 
-Then paste your YouTube URL.
+The YouTube home page appears in the terminal. You can search there or activate
+the numbered search control.
 
 ---
 
@@ -210,10 +208,12 @@ The launcher should work from any current directory.
 
 On first run, YouTubeCMD may:
 
-1. Create a local virtual environment.
-2. Install required Python packages.
-3. Check FFmpeg.
-4. Start the player.
+1. Create or reuse a local virtual environment.
+2. Install Python packages if any visual-browser dependency is missing.
+3. Find an installed Edge, Chrome, Chromium, or Brave browser.
+4. Start the terminal page view.
+
+FFmpeg and a C++ compiler are checked only when using `--native`.
 
 This may take a short time.
 
@@ -221,54 +221,49 @@ This may take a short time.
 
 ## Usage
 
-When the launcher starts, enter a YouTube search or paste a video URL:
-
-```text
-Search YouTube or paste a video URL.
-> nature documentary
-```
-
-Search results appear as a numbered list. Choose one, then choose its source
-resolution: 360p, 480p, 720p, 1080p, or the best available. The default is 720p.
-You can also pass a URL or search phrase directly:
+The default launch renders YouTube in the terminal. Enter search terms or a
+direct URL as optional command-line arguments:
 
 ```bat
 YouTubeCMD.bat "nature documentary"
 YouTubeCMD.bat https://www.youtube.com/watch?v=VIDEO_ID
+YouTubeCMD.bat --fps 6
 ```
 
-Playback opens in a separate resizable window with full RGB color. Resize the
-window while playing and the picture adjusts automatically. The terminal picker
-shows search results; it does not render YouTube's full interactive webpage.
+The visible page is refreshed at 4 FPS by default. Numbered markers are drawn
+over clickable page elements. Type a marker number and press Enter to activate
+it; selecting the YouTube search field lets you enter text with `t words`, then
+submit it with `enter`. Use `/words` for an immediate YouTube search or `g URL`
+to navigate directly.
+
+Use YouTube's own visible player controls to select quality and manage audio.
+For the legacy separate pixel window player, run `YouTubeCMD.bat --native`.
 
 ---
 
 ## Controls
 
-| Key | Action |
+| Command | Action |
 |---|---|
-| `Q` | Quit |
-| `Esc` | Quit |
-| `Space` | Pause / resume |
-| `Left Arrow` | Seek backward 5 seconds |
-| `Right Arrow` | Seek forward 5 seconds |
-| `Up Arrow` | Volume up |
-| `Down Arrow` | Volume down |
-| `R` | Restart video |
-| `F` | Maximize / restore the video window |
-| `+` | Increase playback render resolution |
-| `-` | Decrease playback render resolution |
-
-The display refreshes automatically after the video window is resized. The C++
-player drops late frames and lowers render resolution when it repeatedly misses
-the 30 FPS frame budget. Use `--mode ascii`, `--mode halfblock`, or `--mode color`
-for legacy terminal output when launching `renderer.exe` directly.
+| `number` + Enter | Activate the numbered visible control |
+| `h number` + Enter | Hover a visible control to reveal hidden player controls |
+| `more` / `prev` + Enter | Move through numbered control batches |
+| `/words` | Search YouTube immediately |
+| `g URL` | Navigate to a URL |
+| `t text` | Type into the focused page control |
+| `enter`, `space`, `tab`, `escape`, `backspace` | Send a key to the page |
+| Up / Down arrows | Scroll the webpage |
+| `q` + Enter or Ctrl+C | Quit and close the temporary browser |
+| `--fps 1..10` | Change terminal screenshot refresh rate (default 4) |
 
 ---
 
-## Renderer Modes
+## Native Fallback Renderer Modes
 
-### PIXEL — Windows default, full RGB
+These modes are only used by `YouTubeCMD.bat --native`; the default browser
+mode renders the webpage in full color.
+
+### PIXEL — full RGB
 
 Uses a native resizable graphics window. Every displayed pixel has its own RGB
 color; no text glyphs or terminal color approximations are used.
@@ -313,15 +308,10 @@ Use ASCII if:
 
 ---
 
----
-
 ## Performance Tips
 
-For the best experience:
-
-1. Press `-` to lower render resolution if playback becomes slow.
-2. Reduce the video window size.
-3. Close heavy background applications.
+For the best experience, use Windows Terminal, resize the terminal before
+launching, and lower `--fps` if screenshot refresh uses too much CPU.
 
 ---
 
@@ -330,17 +320,15 @@ For the best experience:
 For weaker machines:
 
 ```text
-Renderer: ASCII or HALF_BLOCK grayscale for legacy terminal output
-Video window size: moderate
-Quality: low or normal
-FPS target: 30
+Terminal: Windows Terminal
+Refresh: YouTubeCMD.bat --fps 2
+Page quality: choose a lower YouTube player resolution
 ```
 
 If playback is stuttering:
-- press `-` to lower quality
-- switch to ASCII mode
-- reduce video window size
-- avoid true-color mode
+- lower the terminal refresh rate
+- choose a lower video quality in YouTube
+- close other applications
 
 ---
 
@@ -355,11 +343,9 @@ bin\renderer.exe --selftest
 ffmpeg -f lavfi -i testsrc=size=320x180:rate=30 -vf format=gray -f rawvideo - | bin\renderer.exe --raw 320 180 30
 ```
 
-`YouTubeCMD.bat` starts a separate RGB pixel window at high render resolution.
-The `+` and `-` keys adjust render resolution during playback; source video
-resolution is selected after choosing a video. The existing `config.json` is
-retained for the Python compatibility player; the native player uses
-command-line mode and quality options.
+The default launcher draws the browser page in the terminal. Run
+`YouTubeCMD.bat --native` to build and use the older separate RGB pixel window
+player. The native player uses command-line mode and quality options.
 
 ---
 
@@ -385,7 +371,8 @@ Then reopen CMD and try again.
 
 ### The launcher says FFmpeg is missing
 
-Install FFmpeg and make sure it is in PATH.
+Install FFmpeg and make sure both `ffmpeg` and `ffplay` are in PATH. This is only
+required for `YouTubeCMD.bat --native`.
 
 Check:
 
@@ -397,7 +384,7 @@ If FFmpeg is installed but not detected, open a new terminal window so PATH can 
 
 ---
 
-### Invalid YouTube URL
+### Invalid address in native mode
 
 Make sure the URL is a real YouTube link.
 
@@ -409,7 +396,10 @@ https://youtu.be/VIDEO_ID
 https://m.youtube.com/watch?v=VIDEO_ID
 ```
 
-Unsupported or malformed URLs will show:
+The `--native` fallback accepts YouTube video URLs only. The terminal browser
+accepts search terms and HTTP(S) URLs.
+
+Unsupported or malformed URLs in native mode show:
 
 ```text
 Invalid YouTube URL.
@@ -434,14 +424,13 @@ YouTubeCMD should show a clean error message instead of crashing.
 
 ### Terminal is too small
 
-If the terminal is too small, YouTubeCMD may show a warning.
-
-If possible, it will continue using the maximum usable area.
+The rendered page uses the available terminal columns and rows. Resize the
+terminal before launching for a larger image.
 
 For better results:
 - enlarge the terminal window
 - use Windows Terminal
-- reduce quality
+- lower refresh rate with `--fps 2`
 
 ---
 
@@ -450,54 +439,42 @@ For better results:
 Some terminals do not handle ANSI true color well.
 
 Try:
-- ASCII mode
-- grayscale HALF_BLOCK mode
-- Windows Terminal instead of legacy CMD
+- Windows Terminal
+- confirm ANSI and UTF-8 support are enabled
+- avoid legacy CMD if its colors or half-block glyphs look incorrect
 
 ---
 
 ### Playback is slow or stuttering
 
 Try:
-- press `-` to reduce quality
-- use ASCII mode
-- disable true-color mode
-- reduce terminal size
+- lower the terminal refresh rate with `--fps 2`
+- reduce the terminal window size
 - close other applications
-- use a lower source resolution
+- select a lower quality in YouTube's player settings
 
 ---
 
-### Audio works but video does not
+### YouTube video does not appear
 
 Possible causes:
-- FFmpeg video decode failed
-- selected stream format is unavailable
-- terminal rendering is too slow
-- video URL expired
-- network problem
+- no supported Edge/Chrome/Chromium/Brave installation
+- YouTube is still loading or showing a consent dialog
+- terminal true-color/Unicode rendering is unavailable
+- network or YouTube playback restrictions
 
-Try:
-- restarting the video
-- seeking again
-- using another video
-- checking FFmpeg installation
+Try clicking a numbered consent or play control, then wait for the next refresh.
 
 ---
 
-### Video works but audio does not
+### YouTube audio does not play
 
-Possible causes:
-- audio device problem
-- FFmpeg audio output problem
-- selected audio stream unavailable
-- system volume muted
+The real page uses the installed browser's audio output, not FFplay. Check the
+Windows output device, system volume, and the player's mute control. Autoplay may
+require clicking the numbered play control first.
 
-Check:
-- Windows volume
-- application volume
-- FFmpeg installation
-- another YouTube video
+This behavior has not been verified in this Linux workspace; test audio playback
+on the target Windows machine.
 
 ---
 
@@ -516,6 +493,8 @@ python -m pytest
 ```
 
 Important test areas:
+- true-color screenshot rendering and numbered overlays
+- URL/search routing and terminal interaction commands
 - terminal search and video selection
 - URL validation
 - renderer sizing
@@ -532,94 +511,39 @@ Run the local renderer preview without YouTube or network access:
 python scripts\local_render_test.py
 ```
 
-Native checks compile C++ and test `--info`, grayscale raw frames, RGB raw frames,
-and stream metadata parsing. The full YouTube playback test requires FFmpeg and
-network access.
+Native fallback checks compile C++ and test `--info`, raw frames, and stream
+metadata parsing. Live YouTube rendering and browser audio require a supported
+system browser, network access, and a Windows terminal; these are manual checks.
 
 ---
 
-## Development Roadmap
+## Current Verification
 
-### Phase 1 — Bootstrap
-- project structure
-- launcher
-- setup checks
-- README
-
-### Phase 2 — Stream Selection
-- URL validation
-- terminal search results and numbered selection
-- yt-dlp extraction
-- friendly errors
-
-### Phase 3 — Native Renderer
-- C++17 terminal detection and ANSI setup
-- ASCII and HALF_BLOCK modes
-- raw-frame input and terminal cleanup
-
-### Phase 4 — Native Playback
-- FFmpeg raw frames
-- 30 FPS frame pacing and adaptive quality
-- FFplay audio playback
-- status bar
-
-### Phase 5 — Controls
-- pause/resume
-- seek
-- volume
-- restart
-- quality controls
-
-### Phase 6 — Hardening
-- clean errors
-- config persistence
-- resize handling
-- documentation
-- tests
-
----
-
-## Future Experiments
-
-Possible future improvements:
-
-- Rust native renderer
-- low-RAM ASCII mode
-- smarter frame dropping
-- adaptive quality
-- better color quantization
-- better terminal capability detection
-- better Windows Terminal optimization
-
-These experiments should stay separate until they are stable.
+The image conversion, numbered overlay, URL routing, and command handling are
+covered by offline unit tests. The live page, browser audio, Windows ANSI
+behavior, and refresh performance still need a manual Windows run.
 
 ---
 
 ## Security Notes
 
-YouTubeCMD should:
-- use official or reputable dependencies
-- avoid downloading random executables
-- avoid installing unknown binaries automatically
-- prefer Python packages from PyPI
-- prefer FFmpeg from reputable sources
+YouTubeCMD launches only an installed system browser with an ephemeral profile.
+It does not download a browser binary or extract media URLs in visual mode.
 
 ---
 
 ## Known Limitations
 
-- Terminal output is not real video pixels.
-- True-color rendering can be slow.
-- Very large terminal windows can reduce FPS.
-- Seeking may take a short time because streams are restarted.
-- Some YouTube videos cannot be accessed automatically.
-- Perfect frame synchronization is not guaranteed.
-- Audio and video use separate FFplay/FFmpeg processes, so small sync offsets
-  can vary with network and device startup time.
-- The terminal picker shows search results; it does not render YouTube's full
-  interactive webpage.
-- CMD and Windows Terminal behave differently.
-- Low-end PCs need lower quality settings.
+- Terminal cells are logical pixels, not physical display pixels; the page is
+  downscaled to the terminal dimensions.
+- Up to 40 visible interactive elements are numbered at a time; `more` and
+  `prev` move between batches.
+- The browser uses a fresh temporary profile, so sign-in cookies are not saved.
+- Browser audio output and autoplay behavior can vary by Windows/browser setup.
+- Rendering refresh is limited to 1-10 FPS to keep CPU use bounded.
+- Legacy CMD may render Unicode/color differently; Windows Terminal is preferred.
+- Live YouTube page, media, and audio behavior has not yet been verified on
+  Windows from this workspace.
 
 ---
 

@@ -90,6 +90,29 @@ class BrowseTests(unittest.TestCase):
             "https://youtu.be/abcdefghijk", max_height=1080
         )
 
+    @patch("youtubecmd.browse.search_videos")
+    @patch("youtubecmd.browse.stream_payload", return_value={"title": "Example"})
+    @patch("builtins.input", side_effect=["example", "1", "1"])
+    def test_interactive_prompts_never_pollute_json_stdout(
+        self, _input, stream_payload, search_videos
+    ):
+        search_videos.return_value = [
+            SearchResult("Example", "Channel", 60, "https://youtu.be/abcdefghijk")
+        ]
+        output = StringIO()
+        errors = StringIO()
+
+        with redirect_stdout(output), redirect_stderr(errors):
+            result = main([])
+
+        self.assertEqual(result, 0)
+        self.assertEqual(output.getvalue(), '{"title": "Example"}\n')
+        self.assertIn("Choose a video (1-1, q to cancel): ", errors.getvalue())
+        self.assertIn("Choose quality [3]: ", errors.getvalue())
+        stream_payload.assert_called_once_with(
+            "https://youtu.be/abcdefghijk", max_height=360
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

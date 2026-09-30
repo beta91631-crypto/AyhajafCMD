@@ -32,7 +32,7 @@ if not exist ".venv\Scripts\python.exe" (
     )
 )
 
-".venv\Scripts\python.exe" -c "import yt_dlp" >nul 2>nul
+".venv\Scripts\python.exe" -c "import yt_dlp; from PIL import Image; from websockets.sync.client import connect; assert hasattr(Image, 'Resampling')" >nul 2>nul
 if errorlevel 1 (
     echo Installing YouTubeCMD Python dependencies...
     ".venv\Scripts\python.exe" -m pip install --disable-pip-version-check -r requirements.txt
