@@ -10,6 +10,7 @@ from socialcmd.visual_browser import (
     PLATFORMS,
     ChromePage,
     VisualBrowserError,
+    _find_browser,
     _render_browser_frame,
     _reserve_debug_port,
     _run_command,
@@ -39,6 +40,40 @@ def test_platform_shortcuts(source, platform):
 def test_empty_input_requires_a_user_choice():
     with pytest.raises(VisualBrowserError, match="Choose a social site"):
         resolve_social_input(None)
+
+
+def test_browser_lookup_prefers_chrome_before_edge(monkeypatch):
+    def fake_which(name):
+        mapping = {
+            "chrome": "/usr/bin/google-chrome",
+            "chrome.exe": "C:/Program Files/Google/Chrome/Application/chrome.exe",
+            "msedge": "/usr/bin/microsoft-edge",
+            "msedge.exe": "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
+            "brave": "/usr/bin/brave-browser",
+            "chromium": "/usr/bin/chromium",
+        }
+        return mapping.get(name)
+
+    monkeypatch.setattr("socialcmd.visual_browser.shutil.which", fake_which)
+
+    assert _find_browser() == ("Chrome", "/usr/bin/google-chrome")
+
+
+def test_browser_lookup_uses_explicit_override(monkeypatch):
+    monkeypatch.setenv("SOCIALCMD_BROWSER", "brave")
+
+    def fake_which(name):
+        mapping = {
+            "chrome": "/usr/bin/google-chrome",
+            "msedge": "/usr/bin/microsoft-edge",
+            "brave": "/usr/bin/brave-browser",
+            "chromium": "/usr/bin/chromium",
+        }
+        return mapping.get(name)
+
+    monkeypatch.setattr("socialcmd.visual_browser.shutil.which", fake_which)
+
+    assert _find_browser() == ("Brave", "/usr/bin/brave-browser")
 
 
 def test_site_menu_uses_the_selected_platform(monkeypatch):

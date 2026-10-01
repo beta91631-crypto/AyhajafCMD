@@ -93,12 +93,23 @@ def resolve_youtube_input(value: str | None) -> str:
 
 
 def _find_browser() -> tuple[str, str] | None:
-    for label, names in (
-        ("Edge", ("msedge", "msedge.exe")),
-        ("Chrome", ("chrome", "chrome.exe", "google-chrome", "google-chrome-stable")),
-        ("Chromium", ("chromium", "chromium-browser", "chromium.exe")),
-        ("Brave", ("brave", "brave.exe", "brave-browser")),
-    ):
+    env_name = os.environ.get("YOUTUBECMD_BROWSER", "").strip().lower()
+    explicit_order = {
+        "chrome": ("Chrome", ("chrome", "chrome.exe", "google-chrome", "google-chrome-stable")),
+        "chromium": ("Chromium", ("chromium", "chromium-browser", "chromium.exe")),
+        "brave": ("Brave", ("brave", "brave.exe", "brave-browser")),
+        "edge": ("Edge", ("msedge", "msedge.exe")),
+    }
+    if env_name in explicit_order:
+        ordered = [explicit_order[env_name]]
+    else:
+        ordered = [
+            ("Chrome", ("chrome", "chrome.exe", "google-chrome", "google-chrome-stable")),
+            ("Brave", ("brave", "brave.exe", "brave-browser")),
+            ("Chromium", ("chromium", "chromium-browser", "chromium.exe")),
+            ("Edge", ("msedge", "msedge.exe")),
+        ]
+    for label, names in ordered:
         for name in names:
             path = shutil.which(name)
             if path:
@@ -110,11 +121,11 @@ def _find_browser() -> tuple[str, str] | None:
             Path(os.environ.get("LOCALAPPDATA", "")),
         )
         paths = (
-            ("Edge", Path("Microsoft/Edge/Application/msedge.exe")),
             ("Chrome", Path("Google/Chrome/Application/chrome.exe")),
+            ("Brave", Path("BraveSoftware/Brave-Browser/Application/brave.exe")),
             ("Chromium", Path("Chromium/Application/chrome.exe")),
             ("Chromium", Path("Chromium/chrome.exe")),
-            ("Brave", Path("BraveSoftware/Brave-Browser/Application/brave.exe")),
+            ("Edge", Path("Microsoft/Edge/Application/msedge.exe")),
         )
         for label, relative in paths:
             for root in roots:
@@ -139,7 +150,7 @@ class ChromePage:
     def __enter__(self) -> ChromePage:
         found = _find_browser()
         if found is None:
-            raise VisualBrowserError("Install Microsoft Edge, Chrome, Chromium, or Brave.")
+            raise VisualBrowserError("Install Chrome, Chromium, Brave, or Edge.")
         self.label, browser_path = found
         self._profile = tempfile.TemporaryDirectory(prefix="YouTubeCMD-")
         arguments = [
