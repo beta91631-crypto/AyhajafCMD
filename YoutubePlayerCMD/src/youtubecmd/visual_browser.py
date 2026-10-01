@@ -135,6 +135,13 @@ def _find_browser() -> tuple[str, str] | None:
     return None
 
 
+def _browser_headless_variants(browser_label: str) -> tuple[str, ...]:
+    label = (browser_label or "").lower()
+    if label in {"brave", "chrome", "chromium"}:
+        return ("--headless=new", "--headless", "--headless=old")
+    return ("--headless=new", "--headless", "--headless=old")
+
+
 class ChromePage:
     def __init__(self, url: str):
         self.url = url
@@ -153,59 +160,67 @@ class ChromePage:
             raise VisualBrowserError("Install Chrome, Chromium, Brave, or Edge.")
         self.label, browser_path = found
         self._profile = tempfile.TemporaryDirectory(prefix="YouTubeCMD-")
-        arguments = [
-            browser_path,
-            "--headless=new",
-            "--remote-debugging-address=127.0.0.1",
-            "--remote-debugging-port=0",
-            f"--user-data-dir={self._profile.name}",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--autoplay-policy=no-user-gesture-required",
-            f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
-            "about:blank",
-        ]
-        options: dict[str, Any] = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.DEVNULL,
-            "stderr": subprocess.DEVNULL,
-            "shell": False,
-            "close_fds": True,
-        }
-        if os.name == "nt":
-            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        else:
-            options["start_new_session"] = True
-        try:
-            self._process = subprocess.Popen(arguments, **options)
-            port = self._wait_for_debug_port()
-            targets = self._get_json(port, "/json/list")
-            if not isinstance(targets, list):
-                raise VisualBrowserError("The browser returned an invalid page list.")
-            endpoint = next((item.get("webSocketDebuggerUrl") for item in targets
-                             if isinstance(item, dict) and item.get("type") == "page"), None)
-            parsed = urlsplit(endpoint or "")
-            if (parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
-                    or parsed.port != port):
-                raise VisualBrowserError("The browser returned an unsafe local debugging endpoint.")
+
+        last_error: Exception | None = None
+        for headless_flag in _browser_headless_variants(self.label):
+            arguments = [
+                browser_path,
+                headless_flag,
+                "--remote-debugging-address=127.0.0.1",
+                "--remote-debugging-port=0",
+                f"--user-data-dir={self._profile.name}",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--autoplay-policy=no-user-gesture-required",
+                f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
+                "about:blank",
+            ]
+            options: dict[str, Any] = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "stderr": subprocess.DEVNULL,
+                "shell": False,
+                "close_fds": True,
+            }
+            if os.name == "nt":
+                options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            else:
+                options["start_new_session"] = True
             try:
-                self._socket = connect(
-                    endpoint, origin=None, open_timeout=10, close_timeout=2,
-                    max_size=MAX_CDP_MESSAGE_BYTES,
-                )
-            except WebSocketException as error:
-                raise VisualBrowserError("Could not connect to the browser's local page session.") from error
-            self.command("Page.enable")
-            self.command("Runtime.enable")
-            self.command("Emulation.setDeviceMetricsOverride", {
-                "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
-                "deviceScaleFactor": 1, "mobile": False,
-            })
-            self.navigate(self.url)
-            return self
-        except Exception:
-            self.close()
-            raise
+                self._process = subprocess.Popen(arguments, **options)
+                port = self._wait_for_debug_port()
+                targets = self._get_json(port, "/json/list")
+                if not isinstance(targets, list):
+                    raise VisualBrowserError("The browser returned an invalid page list.")
+                endpoint = next((item.get("webSocketDebuggerUrl") for item in targets
+                                 if isinstance(item, dict) and item.get("type") == "page"), None)
+                parsed = urlsplit(endpoint or "")
+                if (parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                        or parsed.port != port):
+                    raise VisualBrowserError("The browser returned an unsafe local debugging endpoint.")
+                try:
+                    self._socket = connect(
+                        endpoint, origin=None, open_timeout=10, close_timeout=2,
+                        max_size=MAX_CDP_MESSAGE_BYTES,
+                    )
+                except WebSocketException as error:
+                    raise VisualBrowserError("Could not connect to the browser's local page session.") from error
+                self.command("Page.enable")
+                self.command("Runtime.enable")
+                self.command("Emulation.setDeviceMetricsOverride", {
+                    "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
+                    "deviceScaleFactor": 1, "mobile": False,
+                })
+                self.navigate(self.url)
+                return self
+            except Exception as error:
+                last_error = error
+                self.close()
+                if headless_flag == _browser_headless_variants(self.label)[-1]:
+                    break
+        if last_error is not None:
+            raise last_error
+        raise VisualBrowserError(f"{self.label} did not start successfully in any supported headless mode.")
 
     @staticmethod
     def _get_json(port: int, path: str) -> object:

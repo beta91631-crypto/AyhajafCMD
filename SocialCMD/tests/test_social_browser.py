@@ -10,6 +10,7 @@ from socialcmd.visual_browser import (
     PLATFORMS,
     ChromePage,
     VisualBrowserError,
+    _browser_headless_variants,
     _find_browser,
     _render_browser_frame,
     _reserve_debug_port,
@@ -57,6 +58,11 @@ def test_browser_lookup_prefers_chrome_before_edge(monkeypatch):
     monkeypatch.setattr("socialcmd.visual_browser.shutil.which", fake_which)
 
     assert _find_browser() == ("Chrome", "/usr/bin/google-chrome")
+
+
+def test_browser_headless_variants_fallback_from_new_mode(monkeypatch):
+    assert _browser_headless_variants("Brave") == ("--headless=new", "--headless", "--headless=old")
+    assert _browser_headless_variants("Chrome") == ("--headless=new", "--headless", "--headless=old")
 
 
 def test_browser_lookup_uses_explicit_override(monkeypatch):

@@ -243,6 +243,13 @@ def _find_browser() -> tuple[str, str] | None:
     return None
 
 
+def _browser_headless_variants(browser_label: str) -> tuple[str, ...]:
+    label = (browser_label or "").lower()
+    if label in {"brave", "chrome", "chromium"}:
+        return ("--headless=new", "--headless", "--headless=old")
+    return ("--headless=new", "--headless", "--headless=old")
+
+
 class ChromePage:
     def __init__(
         self,
@@ -276,69 +283,77 @@ class ChromePage:
             persistent_profile = _profile_directory()
             persistent_profile.mkdir(parents=True, exist_ok=True)
             profile_path = str(persistent_profile)
-        port = _reserve_debug_port()
-        arguments = [
-            browser_path,
-            "--headless=new",
-            "--remote-debugging-address=127.0.0.1",
-            f"--remote-debugging-port={port}",
-            f"--user-data-dir={profile_path}",
-            "--disable-background-networking",
-            "--disable-default-apps",
-            "--disable-extensions",
-            "--disable-gpu",
-            "--disable-sync",
-            "--mute-audio",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--autoplay-policy=user-gesture-required",
-            f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
-            "about:blank",
-        ]
-        if not self._load_visual_resources:
-            arguments.append("--blink-settings=imagesEnabled=false")
-        options: dict[str, Any] = {
-            "stdin": subprocess.DEVNULL,
-            "stdout": subprocess.DEVNULL,
-            "shell": False,
-            "close_fds": True,
-        }
-        if os.name == "nt":
-            options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
-        else:
-            options["start_new_session"] = True
-        try:
-            with tempfile.NamedTemporaryFile(
-                prefix="SocialCMD-edge-", suffix=".log", delete=False
-            ) as startup_log:
-                self._startup_log_path = Path(startup_log.name)
-                options["stderr"] = startup_log
-                self._process = subprocess.Popen(arguments, **options)
-            targets = self._wait_for_page_list(port)
-            endpoint = next((item.get("webSocketDebuggerUrl") for item in targets
-                             if isinstance(item, dict) and item.get("type") == "page"), None)
-            parsed = urlsplit(endpoint or "")
-            if (parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
-                    or parsed.port != port):
-                raise VisualBrowserError("The browser returned an unsafe local debugging endpoint.")
+
+        last_error: Exception | None = None
+        for headless_flag in _browser_headless_variants(self.label):
+            port = _reserve_debug_port()
+            arguments = [
+                browser_path,
+                headless_flag,
+                "--remote-debugging-address=127.0.0.1",
+                f"--remote-debugging-port={port}",
+                f"--user-data-dir={profile_path}",
+                "--disable-background-networking",
+                "--disable-default-apps",
+                "--disable-extensions",
+                "--disable-gpu",
+                "--disable-sync",
+                "--mute-audio",
+                "--no-first-run",
+                "--no-default-browser-check",
+                "--autoplay-policy=user-gesture-required",
+                f"--window-size={VIEWPORT_WIDTH},{VIEWPORT_HEIGHT}",
+                "about:blank",
+            ]
+            if not self._load_visual_resources:
+                arguments.append("--blink-settings=imagesEnabled=false")
+            options: dict[str, Any] = {
+                "stdin": subprocess.DEVNULL,
+                "stdout": subprocess.DEVNULL,
+                "shell": False,
+                "close_fds": True,
+            }
+            if os.name == "nt":
+                options["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            else:
+                options["start_new_session"] = True
             try:
-                self._socket = connect(
-                    endpoint, origin=None, open_timeout=10, close_timeout=2,
-                    max_size=MAX_CDP_MESSAGE_BYTES,
-                )
-            except WebSocketException as error:
-                raise VisualBrowserError("Could not connect to the browser's local page session.") from error
-            self.command("Page.enable")
-            self.command("Runtime.enable")
-            self.command("Emulation.setDeviceMetricsOverride", {
-                "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
-                "deviceScaleFactor": 1, "mobile": False,
-            })
-            self.navigate(self.url)
-            return self
-        except Exception:
-            self.close()
-            raise
+                with tempfile.NamedTemporaryFile(
+                    prefix="SocialCMD-edge-", suffix=".log", delete=False
+                ) as startup_log:
+                    self._startup_log_path = Path(startup_log.name)
+                    options["stderr"] = startup_log
+                    self._process = subprocess.Popen(arguments, **options)
+                targets = self._wait_for_page_list(port)
+                endpoint = next((item.get("webSocketDebuggerUrl") for item in targets
+                                 if isinstance(item, dict) and item.get("type") == "page"), None)
+                parsed = urlsplit(endpoint or "")
+                if (parsed.scheme != "ws" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"}
+                        or parsed.port != port):
+                    raise VisualBrowserError("The browser returned an unsafe local debugging endpoint.")
+                try:
+                    self._socket = connect(
+                        endpoint, origin=None, open_timeout=10, close_timeout=2,
+                        max_size=MAX_CDP_MESSAGE_BYTES,
+                    )
+                except WebSocketException as error:
+                    raise VisualBrowserError("Could not connect to the browser's local page session.") from error
+                self.command("Page.enable")
+                self.command("Runtime.enable")
+                self.command("Emulation.setDeviceMetricsOverride", {
+                    "width": VIEWPORT_WIDTH, "height": VIEWPORT_HEIGHT,
+                    "deviceScaleFactor": 1, "mobile": False,
+                })
+                self.navigate(self.url)
+                return self
+            except Exception as error:  # pragma: no cover - exercised by browser compatibility checks.
+                last_error = error
+                self.close()
+                if headless_flag == _browser_headless_variants(self.label)[-1]:
+                    break
+        if last_error is not None:
+            raise last_error
+        raise VisualBrowserError(f"{self.label} did not start successfully in any supported headless mode.")
 
     @staticmethod
     def _get_json(port: int, path: str) -> object:
