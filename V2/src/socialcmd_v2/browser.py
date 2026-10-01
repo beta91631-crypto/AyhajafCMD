@@ -58,6 +58,7 @@ class BrowserSession:
         self.playwright: Playwright | None = None
         self.context: BrowserContext | None = None
         self.page: Page | None = None
+        self.zoom = 1.0
         self._temporary_profile: tempfile.TemporaryDirectory[str] | None = None
 
     def __enter__(self) -> BrowserSession:
@@ -106,6 +107,17 @@ class BrowserSession:
     def screenshot(self) -> bytes:
         return self._require_page().screenshot(type="png", animations="disabled")
 
+    def set_zoom(self, zoom: float) -> None:
+        if not 0.5 <= zoom <= 2.0:
+            raise ValueError("Zoom must be between 0.5 and 2.0.")
+        if self.zoom == zoom:
+            return
+        self.zoom = zoom
+        self._require_page().set_viewport_size({
+            "width": round(VIEWPORT["width"] / zoom),
+            "height": round(VIEWPORT["height"] / zoom),
+        })
+
     def visible_controls(self) -> list[dict[str, Any]]:
         result = self._require_page().evaluate(CONTROL_SCRIPT)
         return result if isinstance(result, list) else []
@@ -115,6 +127,15 @@ class BrowserSession:
             raise ValueError("That control number is not visible in the current page.")
         control = controls[number - 1]
         self._require_page().mouse.click(float(control["x"]), float(control["y"]))
+
+    def hover_control(self, number: int, controls: list[dict[str, Any]]) -> None:
+        if not 1 <= number <= len(controls):
+            raise ValueError("That control number is not visible in the current page.")
+        control = controls[number - 1]
+        self._require_page().mouse.move(float(control["x"]), float(control["y"]))
+
+    def focus_control(self, number: int, controls: list[dict[str, Any]]) -> None:
+        self.click_control(number, controls)
 
     def navigate(self, target: str) -> None:
         self._require_page().goto(target, wait_until="domcontentloaded", timeout=30_000)

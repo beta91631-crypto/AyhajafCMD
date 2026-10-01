@@ -24,7 +24,11 @@ python -m socialcmd_v2
 - `back`, `forward`, `reload`, and `home` navigate
 - `pixel N` sets pixel-art block size (1-8); `colors N` sets palette size (2-256)
 - `dither none` or `dither floyd` adjusts palette dithering
+- `zoom N` adjusts the browser viewport from 0.5x to 2.0x
+- `mode halfblock` uses the portable renderer; `mode sixel` uses Chafa for sub-cell pixel resolution
 - `help` lists commands; `q` exits
+
+Type `settings` for the controller. At the command prompt, press `[ ]` to reduce/increase pixel block size, `- +` to adjust the color palette, `z/x` to zoom, `d` to toggle dithering, and `m` to switch render mode. Each change redraws the page immediately. Pixel block size `1` is the sharpest half-block setting; for physically smaller pixels, use Sixel mode in a Sixel-capable terminal with Chafa installed.
 
 The default profile is stored in `%LOCALAPPDATA%\\AYHAJAFCMD\\V2\\chromium-profile` on Windows, `$XDG_DATA_HOME/AYHAJAFCMD/V2/chromium-profile` on Linux when set, or `~/.local/share/AYHAJAFCMD/V2/chromium-profile` otherwise. Use `--private` to create a temporary profile for one session.
 

@@ -9,10 +9,13 @@ import sys
 from playwright.sync_api import Error as PlaywrightError
 
 from socialcmd_v2.browser import BrowserSession, HOME_URL, resolve_target
+from socialcmd_v2.controller import SETTING_CONTROLS, adjust_setting, settings_panel
 from socialcmd_v2.rendering import RenderSettings, render_screenshot, terminal_dimensions
 
-HELP = """Commands: /search, g ADDRESS_OR_WORDS, click N, up/down, t TEXT, enter,
-back, forward, reload, home, pixel N, colors N, dither none|floyd, help, q"""
+HELP = """Browser: /search, g ADDRESS_OR_WORDS, click N, focus N, hover N, up/down,
+t TEXT, enter, tab, space, escape, backspace, back, forward, reload, home, q
+Controller: settings, [ ], - +, z/x, d, m; pixel N, colors N, zoom N,
+dither none|floyd, mode halfblock|sixel"""
 
 
 def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -25,6 +28,7 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
 def _show_page(session: BrowserSession, settings: RenderSettings) -> list[dict]:
     terminal = shutil.get_terminal_size(fallback=(100, 30))
     columns, rows = terminal_dimensions(terminal.columns, terminal.lines)
+    session.set_zoom(settings.zoom)
     controls = session.visible_controls()
     frame = render_screenshot(session.screenshot(), columns, rows, settings)
     sys.stdout.write("\x1b[2J\x1b[H" + frame + "\x1b[0m\r\n")
@@ -32,7 +36,8 @@ def _show_page(session: BrowserSession, settings: RenderSettings) -> list[dict]:
         labels = " | ".join(f"{index}: {item['label']}" for index, item in enumerate(controls[:12], 1))
         sys.stdout.write(labels[:columns * 2] + "\r\n")
     sys.stdout.write(
-        f"{session.page.url} | pixel={settings.pixel_size} colors={settings.colors} dither={settings.dither}\r\n"
+        f"{session.page.url} | pixel={settings.pixel_size} colors={settings.colors} "
+        f"zoom={settings.zoom:.1f}x dither={settings.dither} mode={settings.mode}\r\n"
     )
     sys.stdout.flush()
     return controls
@@ -46,6 +51,15 @@ def _dispatch(command: str, session: BrowserSession, settings: RenderSettings, c
         return "quit"
     if text in {"help", "?"}:
         return HELP
+    if text == "settings":
+        return settings_panel(settings)
+    control = text.lower()
+    if control in SETTING_CONTROLS:
+        action = SETTING_CONTROLS[control]
+        if action == "mode" and settings.mode == "halfblock" and shutil.which("chafa") is None:
+            return "Sixel needs Chafa on PATH. Keep using halfblock, or install Chafa first."
+        adjust_setting(settings, action)
+        return ""
     if text.startswith("/"):
         session.navigate(resolve_target(text[1:]))
         return ""
@@ -54,6 +68,12 @@ def _dispatch(command: str, session: BrowserSession, settings: RenderSettings, c
         return ""
     if text.startswith("click "):
         session.click_control(int(text[6:].strip()), controls)
+        return ""
+    if text.startswith("hover "):
+        session.hover_control(int(text[6:].strip()), controls)
+        return ""
+    if text.startswith("focus "):
+        session.focus_control(int(text[6:].strip()), controls)
         return ""
     if text in {"up", "down"}:
         session.scroll(text)
@@ -74,16 +94,42 @@ def _dispatch(command: str, session: BrowserSession, settings: RenderSettings, c
         session.navigate(HOME_URL)
         return ""
     if text.startswith("pixel "):
-        settings.pixel_size = int(text[6:].strip())
+        value = text[6:].strip()
+        if value in {"+", "-"}:
+            adjust_setting(settings, "pixel" + value)
+            return ""
+        settings.pixel_size = int(value)
         settings.validate()
         return ""
     if text.startswith("colors "):
-        settings.colors = int(text[7:].strip())
+        value = text[7:].strip()
+        if value in {"+", "-"}:
+            adjust_setting(settings, "colors" + value)
+            return ""
+        settings.colors = int(value)
+        settings.validate()
+        return ""
+    if text.startswith("zoom "):
+        value = text[5:].strip()
+        if value in {"+", "-"}:
+            adjust_setting(settings, "zoom" + value)
+            return ""
+        settings.zoom = float(value)
         settings.validate()
         return ""
     if text.startswith("dither "):
         settings.dither = text[7:].strip().lower()
         settings.validate()
+        return ""
+    if text.startswith("mode "):
+        mode = text[5:].strip().lower()
+        if mode == "sixel" and shutil.which("chafa") is None:
+            return "Sixel needs Chafa on PATH. Keep using halfblock, or install Chafa first."
+        settings.mode = mode
+        settings.validate()
+        return ""
+    if text in {"tab", "space", "escape", "backspace"}:
+        session.press({"tab": "Tab", "space": "Space", "escape": "Escape", "backspace": "Backspace"}[text])
         return ""
     if text.lower().startswith(("http://", "https://")):
         session.navigate(resolve_target(text))
@@ -116,7 +162,7 @@ def run(start_url: str = HOME_URL, private: bool = False) -> int:
             finally:
                 print("\x1b[0m\x1b[?25h", end="", flush=True)
         return 0
-    except (PlaywrightError, OSError) as error:
+    except (PlaywrightError, OSError, RuntimeError) as error:
         print(f"SocialCMD V2: {error}", file=sys.stderr)
         print("Run `python -m playwright install chromium` if its browser is missing.", file=sys.stderr)
         return 1
