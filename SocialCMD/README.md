@@ -3,7 +3,8 @@
 SocialCMD opens the real website in Edge, Chrome, Chromium, or Brave and paints
 its live page into the terminal using full 24-bit RGB half-block pixels. Social
 feeds, images, and page colors are enabled by default; numbered markers let you
-activate visible page controls.
+activate visible page controls. The browser runs headlessly, so only the
+terminal view appears.
 
 Frames are captured as lossless PNG and scaled with nearest-neighbor sampling,
 so pixel edges stay sharp rather than blurred. Each terminal cell uses two

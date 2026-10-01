@@ -65,9 +65,9 @@ def test_browser_lookup_prefers_chrome_before_edge(monkeypatch):
     assert _find_browser() == ("Chrome", "/usr/bin/google-chrome")
 
 
-def test_browser_headless_variants_fallback_from_new_mode(monkeypatch):
-    assert _browser_headless_variants("Brave") == ("", "--headless=new", "--headless", "--headless=old")
-    assert _browser_headless_variants("Chrome") == ("", "--headless=new", "--headless", "--headless=old")
+def test_browser_headless_variants_never_launch_a_visible_window():
+    assert _browser_headless_variants("Brave") == ("--headless=new", "--headless", "--headless=old")
+    assert _browser_headless_variants("Chrome") == ("--headless=new", "--headless", "--headless=old")
 
 
 def test_browser_lookup_uses_explicit_override(monkeypatch):

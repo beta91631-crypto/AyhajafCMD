@@ -27,7 +27,8 @@ You run:
 YouTubeCMD.bat
 ```
 
-The YouTube home page opens. You can also start from a search or video URL:
+The YouTube home page appears in the terminal; no browser window is opened.
+You can also start from a search or video URL:
 
 ```text
 YouTubeCMD.bat "Arryadia"
@@ -44,6 +45,12 @@ controls. Number badges are drawn over visible interactive page elements.
 Terminal cells are not physical monitor pixels. The visual mode uses one Unicode
 half-block cell for two independently colored screenshot pixels, then scales the
 page to the current terminal size. A larger terminal gives the page more detail.
+To show more detail, maximize the terminal and reduce its font size so more
+columns and rows fit on screen. The browser profile is stored locally and reused
+between runs, so YouTube sign-ins can persist. It is stored under
+`%LOCALAPPDATA%\YouTubeCMD\browser-profile-v2` on Windows or
+`$XDG_DATA_HOME/YouTubeCMD/browser-profile-v2` (or
+`~/.local/share/YouTubeCMD/browser-profile-v2`) on Linux.
 
 ---
 

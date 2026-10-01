@@ -12,7 +12,6 @@ import shutil
 import signal
 import subprocess
 import sys
-import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -136,17 +135,22 @@ def _find_browser() -> tuple[str, str] | None:
 
 
 def _browser_headless_variants(browser_label: str) -> tuple[str, ...]:
-    label = (browser_label or "").lower()
-    if label in {"brave", "chrome", "chromium"}:
-        return ("", "--headless=new", "--headless", "--headless=old")
-    return ("", "--headless=new", "--headless", "--headless=old")
+    return ("--headless=new", "--headless", "--headless=old")
+
+
+def _profile_directory() -> Path:
+    if os.name == "nt":
+        root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
+    else:
+        root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
+    return root / "YouTubeCMD" / "browser-profile-v2"
 
 
 class ChromePage:
     def __init__(self, url: str):
         self.url = url
         self.label = ""
-        self._profile: tempfile.TemporaryDirectory | None = None
+        self._profile_path: Path | None = None
         self._process: subprocess.Popen | None = None
         self._socket: Any = None
         self._command_id = 0
@@ -159,16 +163,18 @@ class ChromePage:
         if found is None:
             raise VisualBrowserError("Install Chrome, Chromium, Brave, or Edge.")
         self.label, browser_path = found
-        self._profile = tempfile.TemporaryDirectory(prefix="YouTubeCMD-")
+        self._profile_path = _profile_directory()
+        self._profile_path.mkdir(parents=True, exist_ok=True)
 
         last_error: Exception | None = None
-        for headless_flag in _browser_headless_variants(self.label):
+        headless_variants = _browser_headless_variants(self.label)
+        for headless_flag in headless_variants:
             arguments = [
                 browser_path,
-                *([headless_flag] if headless_flag else []),
+                headless_flag,
                 "--remote-debugging-address=127.0.0.1",
                 "--remote-debugging-port=0",
-                f"--user-data-dir={self._profile.name}",
+                f"--user-data-dir={self._profile_path}",
                 "--no-first-run",
                 "--no-default-browser-check",
                 "--autoplay-policy=no-user-gesture-required",
@@ -216,7 +222,7 @@ class ChromePage:
             except Exception as error:
                 last_error = error
                 self.close()
-                if headless_flag == _browser_headless_variants(self.label)[-1]:
+                if headless_flag == headless_variants[-1]:
                     break
         if last_error is not None:
             raise last_error
@@ -244,8 +250,8 @@ class ChromePage:
             raise VisualBrowserError("The browser returned malformed debugging data.") from error
 
     def _wait_for_debug_port(self) -> int:
-        assert self._profile is not None and self._process is not None
-        active_port = Path(self._profile.name) / "DevToolsActivePort"
+        assert self._profile_path is not None and self._process is not None
+        active_port = self._profile_path / "DevToolsActivePort"
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self._process.poll() is not None:
@@ -379,7 +385,7 @@ class ChromePage:
 
     def screenshot(self) -> str:
         result = self.command("Page.captureScreenshot", {
-            "format": "jpeg", "quality": 85, "fromSurface": True,
+            "format": "png", "fromSurface": True,
             "captureBeyondViewport": False,
         })
         data = result.get("data")
@@ -389,7 +395,7 @@ class ChromePage:
             decoded = base64.b64decode(data, validate=True)
         except (ValueError, base64.binascii.Error) as error:
             raise VisualBrowserError("The browser returned malformed screenshot data.") from error
-        if not decoded.startswith(b"\xff\xd8\xff") or len(decoded) > MAX_SCREENSHOT_BYTES:
+        if not decoded.startswith(b"\x89PNG\r\n\x1a\n") or len(decoded) > MAX_SCREENSHOT_BYTES:
             raise VisualBrowserError("The browser returned an invalid screenshot image.")
         return data
 
@@ -452,10 +458,6 @@ class ChromePage:
                     process.wait(timeout=2)
                 except (OSError, subprocess.TimeoutExpired):
                     pass
-        if self._profile is not None:
-            self._profile.cleanup()
-            self._profile = None
-
     def __exit__(self, *_exc: object) -> None:
         self.close()
 

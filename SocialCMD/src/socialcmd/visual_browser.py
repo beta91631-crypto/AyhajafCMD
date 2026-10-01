@@ -244,10 +244,7 @@ def _find_browser() -> tuple[str, str] | None:
 
 
 def _browser_headless_variants(browser_label: str) -> tuple[str, ...]:
-    label = (browser_label or "").lower()
-    if label in {"brave", "chrome", "chromium"}:
-        return ("", "--headless=new", "--headless", "--headless=old")
-    return ("", "--headless=new", "--headless", "--headless=old")
+    return ("--headless=new", "--headless", "--headless=old")
 
 
 class ChromePage:

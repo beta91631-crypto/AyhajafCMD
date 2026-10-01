@@ -9,6 +9,8 @@ from youtubecmd.visual_browser import (
     INTERACTIVE_SCRIPT,
     MAX_FPS,
     VisualBrowserError,
+    _browser_headless_variants,
+    _profile_directory,
     run_visual_browser,
     _write_terminal,
     _run_command,
@@ -83,14 +85,21 @@ class VisualBrowserTests(unittest.TestCase):
         with self.assertRaises(VisualBrowserError):
             run_visual_browser(fps=MAX_FPS + 1)
 
-    def test_screenshot_capture_uses_higher_jpeg_quality(self):
+    def test_browser_stays_headless_and_uses_persistent_profile(self):
+        self.assertEqual(
+            _browser_headless_variants("Chrome"),
+            ("--headless=new", "--headless", "--headless=old"),
+        )
+        self.assertEqual(_profile_directory().name, "browser-profile-v2")
+
+    def test_screenshot_capture_uses_lossless_png(self):
         page = ChromePage("https://www.youtube.com/")
-        image = base64.b64encode(b"\xff\xd8\xffimage").decode("ascii")
+        image = base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode("ascii")
 
         with patch.object(page, "command", return_value={"data": image}) as command:
             self.assertEqual(page.screenshot(), image)
 
-        self.assertEqual(command.call_args.args[1]["quality"], 85)
+        self.assertEqual(command.call_args.args[1]["format"], "png")
 
     def test_terminal_commands_click_search_type_and_submit(self):
         browser = FakePage()
