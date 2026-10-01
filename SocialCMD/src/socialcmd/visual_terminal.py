@@ -19,7 +19,7 @@ def prepare_terminal_pixels(
     viewport_width: int,
     viewport_height: int,
 ) -> tuple[bytes, int, int, list[tuple[int, int, int]]]:
-    if not 1 <= terminal_width <= 240 or terminal_rows < 4:
+    if not 1 <= terminal_width <= 320 or terminal_rows < 4:
         raise ValueError("Terminal dimensions are outside the supported range.")
     if viewport_width < 1 or viewport_height < 1:
         raise ValueError("Browser viewport dimensions must be positive.")

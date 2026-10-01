@@ -138,8 +138,8 @@ def _find_browser() -> tuple[str, str] | None:
 def _browser_headless_variants(browser_label: str) -> tuple[str, ...]:
     label = (browser_label or "").lower()
     if label in {"brave", "chrome", "chromium"}:
-        return ("--headless=new", "--headless", "--headless=old")
-    return ("--headless=new", "--headless", "--headless=old")
+        return ("", "--headless=new", "--headless", "--headless=old")
+    return ("", "--headless=new", "--headless", "--headless=old")
 
 
 class ChromePage:
@@ -165,7 +165,7 @@ class ChromePage:
         for headless_flag in _browser_headless_variants(self.label):
             arguments = [
                 browser_path,
-                headless_flag,
+                *([headless_flag] if headless_flag else []),
                 "--remote-debugging-address=127.0.0.1",
                 "--remote-debugging-port=0",
                 f"--user-data-dir={self._profile.name}",

@@ -12,6 +12,7 @@ from socialcmd.visual_browser import (
     VisualBrowserError,
     _browser_headless_variants,
     _find_browser,
+    _profile_directory,
     _render_browser_frame,
     _reserve_debug_port,
     _run_command,
@@ -43,6 +44,10 @@ def test_empty_input_requires_a_user_choice():
         resolve_social_input(None)
 
 
+def test_profile_directory_uses_a_fresh_persistent_profile():
+    assert _profile_directory().name == "browser-profile-v2"
+
+
 def test_browser_lookup_prefers_chrome_before_edge(monkeypatch):
     def fake_which(name):
         mapping = {
@@ -61,8 +66,8 @@ def test_browser_lookup_prefers_chrome_before_edge(monkeypatch):
 
 
 def test_browser_headless_variants_fallback_from_new_mode(monkeypatch):
-    assert _browser_headless_variants("Brave") == ("--headless=new", "--headless", "--headless=old")
-    assert _browser_headless_variants("Chrome") == ("--headless=new", "--headless", "--headless=old")
+    assert _browser_headless_variants("Brave") == ("", "--headless=new", "--headless", "--headless=old")
+    assert _browser_headless_variants("Chrome") == ("", "--headless=new", "--headless", "--headless=old")
 
 
 def test_browser_lookup_uses_explicit_override(monkeypatch):
@@ -340,6 +345,17 @@ def test_terminal_scaling_keeps_pixel_colors_crisp():
 
     colors = {tuple(pixels[index:index + 3]) for index in range(0, len(pixels), 3)}
     assert colors <= {(255, 0, 0), (0, 0, 255), (0, 0, 0)}
+
+
+def test_terminal_scaling_supports_wide_render_widths():
+    source = BytesIO()
+    Image.new("RGB", (8, 4), (20, 40, 60)).save(source, format="PNG")
+
+    _, width, _, _ = prepare_terminal_pixels(
+        base64.b64encode(source.getvalue()).decode("ascii"), [], 320, 12, 8, 4
+    )
+
+    assert width == 320
 
 
 @pytest.mark.parametrize("source", ["file:///etc/passwd", "ftp://example.org", "https:///missing-host"])

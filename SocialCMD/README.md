@@ -54,11 +54,16 @@ disable page images. Full visual mode is the default.
 ## Sign-in and privacy
 
 The browser profile is stored locally and reused, so site sign-ins can persist
-between runs. Use `SocialCMD.bat --private` for a temporary profile that is
+between runs. SocialCMD uses a fresh profile folder, separate from older
+versions. Use `SocialCMD.bat --private` for a temporary profile that is
 removed when the app closes. The persistent profile is under
-`%LOCALAPPDATA%\SocialCMD\browser-profile` on Windows and
-`$XDG_DATA_HOME/SocialCMD/browser-profile` (or `~/.local/share/SocialCMD/browser-profile`)
+`%LOCALAPPDATA%\SocialCMD\browser-profile-v2` on Windows and
+`$XDG_DATA_HOME/SocialCMD/browser-profile-v2` (or `~/.local/share/SocialCMD/browser-profile-v2`)
 on Linux. Do not use a shared or untrusted machine for personal accounts.
+
+For a sharper terminal image, maximize the terminal and reduce its font size.
+Each displayed pixel is already one terminal column wide and half a row high;
+the physical pixel size is controlled by the terminal font.
 
 Sites may require sign-in, block automated browsers, or change their layouts.
 SocialCMD does not provide platform APIs or bypass site restrictions; it

@@ -187,7 +187,7 @@ def _profile_directory() -> Path:
         root = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData/Local"))
     else:
         root = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share"))
-    return root / "SocialCMD" / "browser-profile"
+    return root / "SocialCMD" / "browser-profile-v2"
 
 
 def _reserve_debug_port() -> int:
@@ -246,8 +246,8 @@ def _find_browser() -> tuple[str, str] | None:
 def _browser_headless_variants(browser_label: str) -> tuple[str, ...]:
     label = (browser_label or "").lower()
     if label in {"brave", "chrome", "chromium"}:
-        return ("--headless=new", "--headless", "--headless=old")
-    return ("--headless=new", "--headless", "--headless=old")
+        return ("", "--headless=new", "--headless", "--headless=old")
+    return ("", "--headless=new", "--headless", "--headless=old")
 
 
 class ChromePage:
@@ -289,7 +289,7 @@ class ChromePage:
             port = _reserve_debug_port()
             arguments = [
                 browser_path,
-                headless_flag,
+                *([headless_flag] if headless_flag else []),
                 "--remote-debugging-address=127.0.0.1",
                 f"--remote-debugging-port={port}",
                 f"--user-data-dir={profile_path}",
@@ -699,7 +699,7 @@ class _TerminalInput:
 
 def _terminal_size() -> tuple[int, int]:
     size = shutil.get_terminal_size(fallback=(100, 30))
-    return min(240, max(1, size.columns)), min(120, max(4, size.lines))
+    return min(320, max(1, size.columns)), min(120, max(4, size.lines))
 
 
 def _safe_status(value: str, limit: int = 160) -> str:
